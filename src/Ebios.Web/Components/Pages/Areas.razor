@@ -1,0 +1,279 @@
+@page "/areas"
+@rendermode InteractiveServer
+@inject IAreaService AreaService
+
+<PageTitle>ECL - Mining Areas</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="h3 fw-bold mb-1">ECL Mining Areas</h2>
+        <p class="text-muted mb-0">Manage Eastern Coalfields Limited administrative mining areas across West Bengal and Jharkhand</p>
+    </div>
+    <button class="btn btn-primary" @onclick="OpenCreateModal">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+        </svg>
+        Add Mining Area
+    </button>
+</div>
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <strong>Success:</strong> @successMessage
+        <button type="button" class="btn-close" @onclick="@(() => successMessage = null)"></button>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <strong>Error:</strong> @errorMessage
+        <button type="button" class="btn-close" @onclick="@(() => errorMessage = null)"></button>
+    </div>
+}
+
+<!-- Search and Filter Bar -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-12 col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text bg-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
+                            <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                        </svg>
+                    </span>
+                    <input type="text" class="form-control" placeholder="Search by area code or name..." @bind="searchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+            <div class="col-12 col-md-6 text-md-end text-muted small">
+                Showing <strong>@FilteredAreas.Count()</strong> of <strong>@areas.Count</strong> Areas
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Loading ECL Areas...</p>
+    </div>
+}
+else
+{
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 120px;">Code</th>
+                        <th>Mining Area Name</th>
+                        <th>Headquarters</th>
+                        <th style="width: 140px;">Colliery Units</th>
+                        <th style="width: 100px;">Status</th>
+                        <th style="width: 160px;">Created On</th>
+                        <th style="width: 140px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!FilteredAreas.Any())
+                    {
+                        <tr>
+                            <td colspan="7" class="text-center py-4 text-muted">
+                                No mining areas match your filter criteria.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var area in FilteredAreas)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="badge bg-secondary font-monospace fs-6">@area.AreaCode</span>
+                                </td>
+                                <td class="fw-bold text-dark">
+                                    @area.AreaName
+                                </td>
+                                <td class="text-muted">
+                                    @area.Headquarters
+                                </td>
+                                <td>
+                                    <a href="@($"subareas?areaId={area.Id}")" class="badge bg-info-subtle text-info text-decoration-none">
+                                        @area.SubAreaCount Sub-Areas
+                                    </a>
+                                </td>
+                                <td>
+                                    @if (area.IsActive)
+                                    {
+                                        <span class="badge bg-success">Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger">Inactive</span>
+                                    }
+                                </td>
+                                <td class="text-muted small">
+                                    @area.CreatedAt.ToString("dd MMM yyyy")
+                                </td>
+                                <td class="text-end">
+                                    <a href="@($"subareas?areaId={area.Id}")" class="btn btn-sm btn-outline-secondary">
+                                        View Units
+                                    </a>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Create Area Modal -->
+@if (showCreateModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Add New Mining Area</h5>
+                    <button type="button" class="btn-close" @onclick="CloseCreateModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(modalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@modalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Area Code <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control font-monospace" placeholder="e.g. SLP, SRI, KND" @bind="newAreaCode" />
+                        <small class="text-muted">Unique 2-5 letter code identifying this ECL area.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Area Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Salanpur Mining Area" @bind="newAreaName" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Headquarters</label>
+                        <input type="text" class="form-control" @bind="newAreaHq" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseCreateModal" disabled="@isSaving">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveAreaAsync" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Create Area</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AreaDto> areas = new();
+    private bool isLoading = true;
+    private string searchTerm = string.Empty;
+
+    private string? successMessage;
+    private string? errorMessage;
+
+    // Modal state
+    private bool showCreateModal = false;
+    private bool isSaving = false;
+    private string? modalError;
+    private string newAreaCode = string.Empty;
+    private string newAreaName = string.Empty;
+    private string newAreaHq = "ECL HQ Sanctoria";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAreasAsync();
+    }
+
+    private async Task LoadAreasAsync()
+    {
+        isLoading = true;
+        try
+        {
+            areas = await AreaService.GetAllAreasAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load areas: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private IEnumerable<AreaDto> FilteredAreas =>
+        string.IsNullOrWhiteSpace(searchTerm)
+            ? areas
+            : areas.Where(a => a.AreaCode.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                               a.AreaName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    private void OpenCreateModal()
+    {
+        newAreaCode = string.Empty;
+        newAreaName = string.Empty;
+        newAreaHq = "ECL HQ Sanctoria";
+        modalError = null;
+        showCreateModal = true;
+    }
+
+    private void CloseCreateModal()
+    {
+        showCreateModal = false;
+        modalError = null;
+    }
+
+    private async Task SaveAreaAsync()
+    {
+        modalError = null;
+        if (string.IsNullOrWhiteSpace(newAreaCode))
+        {
+            modalError = "Area Code is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newAreaName))
+        {
+            modalError = "Area Name is required.";
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            var dto = new CreateAreaDto(newAreaCode.Trim().ToUpperInvariant(), newAreaName.Trim(), newAreaHq.Trim());
+            await AreaService.CreateAreaAsync(dto);
+            successMessage = $"Mining Area '{dto.AreaName}' ({dto.AreaCode}) created successfully.";
+            showCreateModal = false;
+            await LoadAreasAsync();
+        }
+        catch (Exception ex)
+        {
+            modalError = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}
+

@@ -1,0 +1,548 @@
+@page "/devices"
+@rendermode InteractiveServer
+@inject IDeviceService DeviceService
+@inject IAreaService AreaService
+
+<PageTitle>ECL - Biometric Devices Setup</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="h3 fw-bold mb-1">Biometric Attendance Terminals</h2>
+        <p class="text-muted mb-0">Hardware setup & terminal registration for face recognition and fingerprint readers across colliery gates</p>
+    </div>
+    <button class="btn btn-primary" @onclick="OpenCreateModal">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+        </svg>
+        Register Biometric Device
+    </button>
+</div>
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Success:</strong> @successMessage
+        <button type="button" class="btn-close" @onclick="@(() => successMessage = null)"></button>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Error:</strong> @errorMessage
+        <button type="button" class="btn-close" @onclick="@(() => errorMessage = null)"></button>
+    </div>
+}
+
+<!-- Filters Bar -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-5">
+                <div class="input-group">
+                    <span class="input-group-text bg-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
+                            <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                        </svg>
+                    </span>
+                    <input type="text" class="form-control" placeholder="Search by serial number or name..." @bind="searchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="col-12 col-md-4">
+                <select class="form-select" @bind="subAreaFilter">
+                    <option value="0">All Colliery Units (@subAreas.Count Units)</option>
+                    @foreach (var sub in subAreas)
+                    {
+                        <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode)</option>
+                    }
+                </select>
+            </div>
+
+            <div class="col-12 col-md-3">
+                <select class="form-select" @bind="directionFilter">
+                    <option value="all">All Gate Directions</option>
+                    <option value="in">Entry Gate (In)</option>
+                    <option value="out">Exit Gate (Out)</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Loading registered biometric terminals...</p>
+    </div>
+}
+else
+{
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 150px;">Serial No</th>
+                        <th>Device Terminal Name</th>
+                        <th>Colliery / Unit</th>
+                        <th style="width: 110px;">Gate</th>
+                        <th style="width: 140px;">Hardware Type</th>
+                        <th style="width: 150px;">Biometric Sync</th>
+                        <th style="width: 100px;">Status</th>
+                        <th style="width: 140px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!FilteredDevices.Any())
+                    {
+                        <tr>
+                            <td colspan="8" class="text-center py-4 text-muted">
+                                No biometric devices found matching your criteria.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var dev in FilteredDevices)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="badge bg-dark font-monospace fs-6">@dev.SerialNumber</span>
+                                </td>
+                                <td class="fw-bold text-dark">
+                                    @dev.DeviceName
+                                </td>
+                                <td>
+                                    <div>@dev.SubAreaName</div>
+                                    <small class="text-muted">@dev.AreaName</small>
+                                </td>
+                                <td>
+                                    @if (dev.Direction.Equals("IN", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                            ↓ In (Entry)
+                                        </span>
+                                    }
+                                    else if (dev.Direction.Equals("OUT", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="badge bg-info-subtle text-info border border-info-subtle">
+                                            ↑ Out (Exit)
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle">
+                                            ⇅ INOUT (Bi-directional)
+                                        </span>
+                                    }
+                                </td>
+                                <td class="text-muted small">
+                                    <div class="fw-semibold text-dark">@dev.DeviceType</div>
+                                    <small class="text-secondary">Code: <code>@dev.ActivationCode</code></small>
+                                </td>
+                                <td>
+                                    @if (dev.IsSyncedToEbios)
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                            ● Synced
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                            ● Sync Failed
+                                        </span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (dev.IsActive)
+                                    {
+                                        <span class="badge bg-success">Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary">Disabled</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-outline-warning me-1" @onclick="@(() => OpenActivateModal(dev))" title="Activate terminal with eBios">
+                                        ⚡ Activate
+                                    </button>
+                                    @if (!dev.IsSyncedToEbios)
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncDeviceAsync(dev))" title="Retry push terminal to eBios">
+                                            Retry Sync
+                                        </button>
+                                    }
+                                    <button class="btn btn-sm @(dev.IsActive ? "btn-outline-danger" : "btn-outline-success")" @onclick="@(() => ToggleStatusAsync(dev))">
+                                        @(dev.IsActive ? "Disable" : "Enable")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Register Device Modal -->
+@if (showCreateModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Register Biometric Attendance Terminal</h5>
+                    <button type="button" class="btn-close" @onclick="CloseCreateModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(modalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@modalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Colliery Unit / Sub-Area <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="newSubAreaId">
+                            <option value="0">-- Select Colliery Unit --</option>
+                            @foreach (var sub in subAreas)
+                            {
+                                <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Device Serial Number <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control font-monospace" placeholder="e.g. DEV-BIO-9021" @bind="newSerial" />
+                        <small class="text-muted">Unique hardware serial printed on the attendance machine.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Device Terminal Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Pit 1 Incline Main Turnstile" @bind="newName" />
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Gate Direction <span class="text-danger">*</span></label>
+                            <select class="form-select" @bind="newDirection">
+                                <option value="INOUT">INOUT (Bi-directional)</option>
+                                <option value="IN">IN (Shift Entry)</option>
+                                <option value="OUT">OUT (Shift Exit)</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Hardware Type</label>
+                            <select class="form-select" @bind="newDeviceType">
+                                <option value="AI">AI (Face Recognition Reader)</option>
+                                <option value="Non AI">Non AI (Fingerprint / Turnstile)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Device Activation Code</label>
+                        <input type="text" class="form-control font-monospace" placeholder="Enter activation code (default: 0)" @bind="newActivationCode" />
+                        <small class="text-muted">Device activation code required by eBioServer (default: 0).</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseCreateModal" disabled="@isSaving">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveDeviceAsync" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Registering...</span>
+                        }
+                        else
+                        {
+                            <span>Register Device</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Activate Device Modal -->
+@if (showActivateModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">⚡ Activate Biometric Terminal</h5>
+                    <button type="button" class="btn-close" @onclick="CloseActivateModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(activateModalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@activateModalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-muted small">Terminal Details</label>
+                        <div class="p-2 bg-light rounded border">
+                            <div class="fw-bold text-dark">@activateDeviceName</div>
+                            <div class="small text-muted font-monospace">SN: @activateDeviceSerial</div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Device Activation Code <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control font-monospace" placeholder="e.g. 0 or license activation code" @bind="activateCode" />
+                        <small class="text-muted">Enter the activation code required by eBioServer to activate this machine.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseActivateModal" disabled="@isActivating">Cancel</button>
+                    <button type="button" class="btn btn-warning" @onclick="SubmitActivationAsync" disabled="@isActivating">
+                        @if (isActivating)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Activating...</span>
+                        }
+                        else
+                        {
+                            <span>⚡ Send Activation Code</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DeviceDto> devices = new();
+    private List<SubAreaDto> subAreas = new();
+    private bool isLoading = true;
+
+    // Filters
+    private string searchTerm = string.Empty;
+    private int subAreaFilter = 0;
+    private string directionFilter = "all";
+
+    // Alerts
+    private string? successMessage;
+    private string? errorMessage;
+
+    // Modal state
+    private bool showCreateModal = false;
+    private bool isSaving = false;
+    private string? modalError;
+    private int newSubAreaId = 0;
+    private string newSerial = string.Empty;
+    private string newName = string.Empty;
+    private string newDirection = "IN";
+    private string newDeviceType = "AI";
+    private string newActivationCode = "0";
+
+    // Modal state: Activate Terminal
+    private bool showActivateModal = false;
+    private bool isActivating = false;
+    private string? activateModalError;
+    private int activateDeviceId;
+    private string activateDeviceSerial = string.Empty;
+    private string activateDeviceName = string.Empty;
+    private string activateCode = "0";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        try
+        {
+            devices = await DeviceService.GetDevicesAsync();
+            subAreas = await AreaService.GetSubAreasAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load devices: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private IEnumerable<DeviceDto> FilteredDevices
+    {
+        get
+        {
+            var query = devices.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = query.Where(d =>
+                    d.SerialNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    d.DeviceName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    d.SubAreaName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (subAreaFilter > 0)
+            {
+                query = query.Where(d => d.SubAreaId == subAreaFilter);
+            }
+
+            if (directionFilter != "all")
+            {
+                query = query.Where(d => d.Direction.Equals(directionFilter, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return query;
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        newSubAreaId = subAreas.FirstOrDefault()?.Id ?? 0;
+        newSerial = string.Empty;
+        newName = string.Empty;
+        newDirection = "in";
+        newDeviceType = "Biometric Face/Thumb";
+        newActivationCode = "0";
+        modalError = null;
+        showCreateModal = true;
+    }
+
+    private void CloseCreateModal()
+    {
+        showCreateModal = false;
+        modalError = null;
+    }
+
+    private void OpenActivateModal(DeviceDto dev)
+    {
+        activateDeviceId = dev.Id;
+        activateDeviceSerial = dev.SerialNumber;
+        activateDeviceName = dev.DeviceName;
+        activateCode = string.IsNullOrWhiteSpace(dev.ActivationCode) ? "0" : dev.ActivationCode;
+        activateModalError = null;
+        showActivateModal = true;
+    }
+
+    private void CloseActivateModal()
+    {
+        showActivateModal = false;
+        activateModalError = null;
+    }
+
+    private async Task SubmitActivationAsync()
+    {
+        activateModalError = null;
+        isActivating = true;
+        try
+        {
+            var (success, msg) = await DeviceService.ActivateDeviceAsync(activateDeviceId, activateCode);
+            if (success)
+            {
+                successMessage = msg;
+                showActivateModal = false;
+                devices = await DeviceService.GetDevicesAsync();
+            }
+            else
+            {
+                activateModalError = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            activateModalError = ex.Message;
+        }
+        finally
+        {
+            isActivating = false;
+        }
+    }
+
+    private async Task SaveDeviceAsync()
+    {
+        modalError = null;
+
+        if (newSubAreaId <= 0)
+        {
+            modalError = "Please select a Colliery Unit.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newSerial))
+        {
+            modalError = "Serial Number is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            modalError = "Device Name is required.";
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            var dto = new CreateDeviceDto(newSerial.Trim().ToUpperInvariant(), newName.Trim(), newDirection, newDeviceType, string.IsNullOrWhiteSpace(newActivationCode) ? "0" : newActivationCode.Trim(), newSubAreaId);
+            var result = await DeviceService.CreateDeviceAsync(dto);
+            successMessage = $"Device '{result.DeviceName}' ({result.SerialNumber}) registered successfully. Biometric sync: {(result.IsSyncedToEbios ? "Synced" : "Queued")}.";
+            showCreateModal = false;
+            devices = await DeviceService.GetDevicesAsync();
+        }
+        catch (Exception ex)
+        {
+            modalError = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SyncDeviceAsync(DeviceDto dev)
+    {
+        try
+        {
+            var synced = await DeviceService.SyncDeviceAsync(dev.Id);
+            if (synced)
+            {
+                successMessage = $"Device {dev.SerialNumber} synchronized to biometric system.";
+                devices = await DeviceService.GetDevicesAsync();
+            }
+            else
+            {
+                errorMessage = $"Failed to synchronize device {dev.SerialNumber}.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Sync error: {ex.Message}";
+        }
+    }
+
+    private async Task ToggleStatusAsync(DeviceDto dev)
+    {
+        try
+        {
+            var toggled = await DeviceService.ToggleDeviceStatusAsync(dev.Id);
+            if (toggled)
+            {
+                successMessage = $"Device {dev.SerialNumber} status updated.";
+                devices = await DeviceService.GetDevicesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to update device status: {ex.Message}";
+        }
+    }
+}
+

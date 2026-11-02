@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Ebios.Application/Ebios.Application.csproj" />
+    <Project Path="src/Ebios.Domain/Ebios.Domain.csproj" />
+    <Project Path="src/Ebios.Infrastructure/Ebios.Infrastructure.csproj" />
+    <Project Path="src/Ebios.Web/Ebios.Web.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,995 @@
+@page "/employees"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IEmployeeService EmployeeService
+@inject IAreaService AreaService
+@inject IAttendanceService AttendanceService
+@inject UserSessionService UserSession
+
+<PageTitle>ECL - Colliery Workers & Personnel</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h2 class="h3 fw-bold mb-1">Colliery Workers & Personnel</h2>
+            @if (UserSession.IsSuperAdmin)
+            {
+                <span class="badge bg-danger">ECL HQ Scope (All Areas)</span>
+            }
+            else if (UserSession.IsAreaAdmin)
+            {
+                <span class="badge bg-primary">@(UserSession.CurrentUser?.AreaName) Jurisdiction</span>
+            }
+            else if (UserSession.IsUnitAdmin)
+            {
+                <span class="badge bg-info text-dark">@(UserSession.CurrentUser?.SubAreaName) Unit Only</span>
+            }
+        </div>
+        <p class="text-muted mb-0">
+            @if (UserSession.IsSuperAdmin)
+            {
+                <span>Main Administrator: You have full authority to view, onboard, edit, and transfer workers across all 13 Mining Areas.</span>
+            }
+            else if (UserSession.IsAreaAdmin)
+            {
+                <span>Area Personnel Manager: You have authority to manage workers and transfer them between colliery units inside <strong>@(UserSession.CurrentUser?.AreaName)</strong>.</span>
+            }
+            else
+            {
+                <span>Unit Personnel Manager: Access strictly restricted to workers in <strong>@(UserSession.CurrentUser?.SubAreaName)</strong>.</span>
+            }
+        </p>
+    </div>
+    <button class="btn btn-primary" @onclick="OpenCreateModal">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+        </svg>
+        Onboard Worker
+    </button>
+</div>
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Success:</strong> @successMessage
+        <button type="button" class="btn-close" @onclick="@(() => successMessage = null)"></button>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Error:</strong> @errorMessage
+        <button type="button" class="btn-close" @onclick="@(() => errorMessage = null)"></button>
+    </div>
+}
+
+<!-- Filters Bar -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-5">
+                <div class="input-group">
+                    <span class="input-group-text bg-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
+                            <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                        </svg>
+                    </span>
+                    <input type="text" class="form-control" placeholder="Search by name, ID, or designation..." @bind="searchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="col-12 col-md-4">
+                <select class="form-select" @bind="subAreaFilter">
+                    <option value="0">All Permitted Units (@PermittedSubAreas.Count() Units)</option>
+                    @foreach (var sub in PermittedSubAreas)
+                    {
+                        <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
+                    }
+                </select>
+            </div>
+
+            <div class="col-12 col-md-3 text-md-end text-muted small">
+                Showing <strong>@FilteredEmployees.Count()</strong> of <strong>@employees.Count</strong> Workers
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Loading workers for your jurisdiction...</p>
+    </div>
+}
+else
+{
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 140px;">Employee ID</th>
+                        <th>Full Name</th>
+                        <th>Designation / Role</th>
+                        <th>Colliery Unit & Area</th>
+                        <th style="width: 150px;">Biometric Sync</th>
+                        <th style="width: 100px;">Status</th>
+                        <th style="width: 200px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!FilteredEmployees.Any())
+                    {
+                        <tr>
+                            <td colspan="7" class="text-center py-4 text-muted">
+                                No employees found in this jurisdiction matching your filter.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var emp in FilteredEmployees)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="badge bg-primary font-monospace fs-6">@emp.EmpCode</span>
+                                </td>
+                                <td class="fw-bold text-dark">
+                                    @emp.FullName
+                                </td>
+                                <td>
+                                    <span class="badge bg-light text-dark border">@emp.Designation</span>
+                                </td>
+                                <td>
+                                    <div class="fw-semibold text-dark">@emp.SubAreaName</div>
+                                    @if (emp.AdditionalSubAreaNames.Any())
+                                    {
+                                        <div class="d-flex flex-wrap gap-1 mt-1">
+                                            @foreach (var addName in emp.AdditionalSubAreaNames)
+                                            {
+                                                <span class="badge bg-info-subtle text-info border border-info-subtle" style="font-size: 0.72rem;">
+                                                    + @addName
+                                                </span>
+                                            }
+                                        </div>
+                                    }
+                                    <small class="text-muted">@emp.AreaName</small>
+                                </td>
+                                <td>
+                                    @if (emp.IsSyncedToEbios)
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                            ● Synced
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                            ● Sync Failed
+                                        </span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (emp.IsActive)
+                                    {
+                                        <span class="badge bg-success">Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary">Inactive</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <!-- View Logs Button -->
+                                    <button class="btn btn-sm btn-outline-info me-1" @onclick="@(() => OpenEmployeeLogsModal(emp))" title="View worker punch logs">
+                                        📋 Logs
+                                    </button>
+
+                                    <!-- Edit Button (Permitted for SuperAdmin and Respected Area Admin) -->
+                                    <button class="btn btn-sm btn-outline-secondary me-1" @onclick="@(() => OpenEditModal(emp))" title="Edit details or transfer location">
+                                        ✏️ Edit
+                                    </button>
+
+                                    <!-- Re-sync Button (Only shown if sync failed) -->
+                                    @if (!emp.IsSyncedToEbios)
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncEmployeeAsync(emp))" title="Retry push worker to eBios">
+                                            Retry Sync
+                                        </button>
+                                    }
+
+                                    <!-- Status Toggle -->
+                                    <button class="btn btn-sm @(emp.IsActive ? "btn-outline-danger" : "btn-outline-success")" @onclick="@(() => ToggleStatusAsync(emp))">
+                                        @(emp.IsActive ? "Deactivate" : "Activate")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Modal 1: Onboard Employee -->
+@if (showCreateModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Onboard Colliery Worker</h5>
+                    <button type="button" class="btn-close" @onclick="CloseCreateModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(modalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@modalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Assigned Colliery Unit <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="newSubAreaId">
+                            <option value="0">-- Select Permitted Colliery Unit --</option>
+                            @foreach (var sub in PermittedSubAreas)
+                            {
+                                <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
+                            }
+                        </select>
+                        @if (UserSession.IsAreaAdmin)
+                        {
+                            <small class="text-muted">Showing only Colliery Units inside your jurisdiction: @(UserSession.CurrentUser?.AreaName).</small>
+                        }
+                    </div>
+
+                    <!-- Additional Multi-Location Assignment -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">
+                            Additional Authorized Units (Multi-Location)
+                        </label>
+                        <div class="input-group mb-2">
+                            <select class="form-select" @bind="selectedAdditionalSubAreaId">
+                                <option value="0">-- Select Additional Unit to Authorize --</option>
+                                @foreach (var sub in PermittedSubAreas.Where(s => s.Id != newSubAreaId && !newAdditionalSubAreaIds.Contains(s.Id)))
+                                {
+                                    <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode)</option>
+                                }
+                            </select>
+                            <button class="btn btn-outline-primary" type="button" @onclick="AddLocationToNewWorker">
+                                ➕ Add Location
+                            </button>
+                        </div>
+                        @if (newAdditionalSubAreaIds.Any())
+                        {
+                            <div class="d-flex flex-wrap gap-1 align-items-center p-2 bg-light rounded border">
+                                <span class="small text-muted me-1">Authorized Units:</span>
+                                @foreach (var subId in newAdditionalSubAreaIds)
+                                {
+                                    var unit = allSubAreas.FirstOrDefault(s => s.Id == subId);
+                                    if (unit != null)
+                                    {
+                                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center py-1 px-2">
+                                            @unit.SubAreaName
+                                            <button type="button" class="btn-close ms-2" style="font-size: 0.6rem;" @onclick="@(() => RemoveLocationFromNewWorker(subId))"></button>
+                                        </span>
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Employee ID / Code <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control font-monospace" placeholder="e.g. ECL-8041" @bind="newEmpCode" />
+                        <small class="text-muted">Unique official Coal India / ECL employee number.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Full Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Sunil Kumar Soren" @bind="newFullName" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Designation / Trade</label>
+                        <select class="form-select" @bind="newDesignation">
+                            <option value="General Mazdoor">General Mazdoor (Surface/Underground)</option>
+                            <option value="Overman (Underground)">Overman (Underground)</option>
+                            <option value="Mining Sirdar">Mining Sirdar</option>
+                            <option value="Shot Firer">Shot Firer</option>
+                            <option value="Dumper Operator">Dumper Operator</option>
+                            <option value="Excavator Operator">Excavator Operator</option>
+                            <option value="Electrician / Fitter">Electrician / Fitter</option>
+                            <option value="Clerk / Staff">Clerk / Staff</option>
+                            <option value="Assistant Manager">Assistant Manager</option>
+                        </select>
+                    </div>
+
+                    <div class="alert alert-light border py-2 small text-muted mb-0">
+                        <strong>Biometric Auto-Enrollment:</strong> This worker will be automatically registered with turnstiles at this colliery.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseCreateModal" disabled="@isSaving">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveEmployeeAsync" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Onboarding...</span>
+                        }
+                        else
+                        {
+                            <span>Save & Register Worker</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Employee Punch Logs Modal -->
+@if (showLogsModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">📋 Worker Punch Logs: @logsWorkerName</h5>
+                        <small class="text-muted font-monospace">Employee Code: @logsWorkerEmpCode</small>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseEmployeeLogsModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (isLoadingLogs)
+                    {
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
+                            <span class="ms-2 text-muted">Loading punch records...</span>
+                        </div>
+                    }
+                    else if (!employeeLogs.Any())
+                    {
+                        <div class="text-center py-4 text-muted">
+                            <div>No punch records found for this worker yet.</div>
+                            <small>Punches will appear here automatically when the worker swipes on a biometric turnstile.</small>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th>Punch Time</th>
+                                        <th>Direction</th>
+                                        <th>Colliery Unit / Area</th>
+                                        <th>Terminal Name</th>
+                                        <th>Verification</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var log in employeeLogs)
+                                    {
+                                        <tr>
+                                            <td class="font-monospace">
+                                                <strong>@log.LogDate.ToString("HH:mm:ss")</strong>
+                                                <small class="text-muted ms-1">@log.LogDate.ToString("dd MMM yyyy")</small>
+                                            </td>
+                                            <td>
+                                                @if (log.Direction.Equals("IN", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                        ↓ IN
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-info-subtle text-info border border-info-subtle">
+                                                        ↑ OUT
+                                                    </span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <div>@log.SubAreaName</div>
+                                                <small class="text-muted">@log.AreaName</small>
+                                            </td>
+                                            <td>
+                                                <div>@log.DeviceName</div>
+                                                <small class="font-monospace text-muted">SN: @log.SerialNumber</small>
+                                            </td>
+                                            <td class="text-muted small">
+                                                @(string.IsNullOrWhiteSpace(log.VerificationType) ? "Biometric" : log.VerificationType)
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                    ● @log.Status
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseEmployeeLogsModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 2: Edit Worker & Transfer Location -->
+@if (showEditModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Edit Worker & Location Transfer</h5>
+                    <button type="button" class="btn-close" @onclick="CloseEditModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(editModalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@editModalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-muted small">Employee ID (Fixed)</label>
+                        <div>
+                            <span class="badge bg-dark font-monospace fs-6 px-3 py-2">@editEmpCode</span>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Full Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" @bind="editFullName" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Designation / Role</label>
+                        <select class="form-select" @bind="editDesignation">
+                            <option value="General Mazdoor">General Mazdoor (Surface/Underground)</option>
+                            <option value="Overman (Underground)">Overman (Underground)</option>
+                            <option value="Mining Sirdar">Mining Sirdar</option>
+                            <option value="Shot Firer">Shot Firer</option>
+                            <option value="Dumper Operator">Dumper Operator</option>
+                            <option value="Excavator Operator">Excavator Operator</option>
+                            <option value="Electrician / Fitter">Electrician / Fitter</option>
+                            <option value="Clerk / Staff">Clerk / Staff</option>
+                            <option value="Assistant Manager">Assistant Manager</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">
+                            Assigned Colliery Unit / Location <span class="text-danger">*</span>
+                        </label>
+                        <select class="form-select" @bind="editSubAreaId">
+                            @foreach (var sub in PermittedSubAreas)
+                            {
+                                <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
+                            }
+                        </select>
+                        <div class="form-text small">
+                            @if (UserSession.IsSuperAdmin)
+                            {
+                                <span>Main Admin Authority: You can transfer this worker to any colliery unit across ECL.</span>
+                            }
+                            else if (UserSession.IsAreaAdmin)
+                            {
+                                <span>Area Admin Authority: You can transfer this worker between units inside <strong>@(UserSession.CurrentUser?.AreaName)</strong>.</span>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Additional Multi-Location Assignment (Edit) -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">
+                            Additional Authorized Units (Multi-Location)
+                        </label>
+                        <div class="input-group mb-2">
+                            <select class="form-select" @bind="editSelectedAdditionalSubAreaId">
+                                <option value="0">-- Select Additional Unit to Authorize --</option>
+                                @foreach (var sub in PermittedSubAreas.Where(s => s.Id != editSubAreaId && !editAdditionalSubAreaIds.Contains(s.Id)))
+                                {
+                                    <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode)</option>
+                                }
+                            </select>
+                            <button class="btn btn-outline-primary" type="button" @onclick="AddLocationToEditWorker">
+                                ➕ Add Location
+                            </button>
+                        </div>
+                        @if (editAdditionalSubAreaIds.Any())
+                        {
+                            <div class="d-flex flex-wrap gap-1 align-items-center p-2 bg-light rounded border">
+                                <span class="small text-muted me-1">Authorized Units:</span>
+                                @foreach (var subId in editAdditionalSubAreaIds)
+                                {
+                                    var unit = allSubAreas.FirstOrDefault(s => s.Id == subId);
+                                    if (unit != null)
+                                    {
+                                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center py-1 px-2">
+                                            @unit.SubAreaName
+                                            <button type="button" class="btn-close ms-2" style="font-size: 0.6rem;" @onclick="@(() => RemoveLocationFromEditWorker(subId))"></button>
+                                        </span>
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <div class="alert alert-info py-2 small mb-0">
+                        <strong>Automatic Biometric Re-Sync:</strong> Saving will update this worker's location in the central eBios biometric system so gate attendance readers immediately update.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseEditModal" disabled="@isSaving">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveEditEmployeeAsync" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Saving & Re-syncing...</span>
+                        }
+                        else
+                        {
+                            <span>Save Changes & Sync</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Employee Punch Logs Modal -->
+@if (showLogsModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">📋 Worker Punch Logs: @logsWorkerName</h5>
+                        <small class="text-muted font-monospace">Employee Code: @logsWorkerEmpCode</small>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseEmployeeLogsModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (isLoadingLogs)
+                    {
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
+                            <span class="ms-2 text-muted">Loading punch records...</span>
+                        </div>
+                    }
+                    else if (!employeeLogs.Any())
+                    {
+                        <div class="text-center py-4 text-muted">
+                            <div>No punch records found for this worker yet.</div>
+                            <small>Punches will appear here automatically when the worker swipes on a biometric turnstile.</small>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th>Punch Time</th>
+                                        <th>Direction</th>
+                                        <th>Colliery Unit / Area</th>
+                                        <th>Terminal Name</th>
+                                        <th>Verification</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var log in employeeLogs)
+                                    {
+                                        <tr>
+                                            <td class="font-monospace">
+                                                <strong>@log.LogDate.ToString("HH:mm:ss")</strong>
+                                                <small class="text-muted ms-1">@log.LogDate.ToString("dd MMM yyyy")</small>
+                                            </td>
+                                            <td>
+                                                @if (log.Direction.Equals("IN", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                        ↓ IN
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-info-subtle text-info border border-info-subtle">
+                                                        ↑ OUT
+                                                    </span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <div>@log.SubAreaName</div>
+                                                <small class="text-muted">@log.AreaName</small>
+                                            </td>
+                                            <td>
+                                                <div>@log.DeviceName</div>
+                                                <small class="font-monospace text-muted">SN: @log.SerialNumber</small>
+                                            </td>
+                                            <td class="text-muted small">
+                                                @(string.IsNullOrWhiteSpace(log.VerificationType) ? "Biometric" : log.VerificationType)
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                    ● @log.Status
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseEmployeeLogsModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<EmployeeDto> employees = new();
+    private List<SubAreaDto> allSubAreas = new();
+    private bool isLoading = true;
+
+    // Filters
+    private string searchTerm = string.Empty;
+    private int subAreaFilter = 0;
+
+    // Alerts
+    private string? successMessage;
+    private string? errorMessage;
+
+    // Modal state: Onboard
+    private bool showCreateModal = false;
+    private bool isSaving = false;
+    private string? modalError;
+    private int newSubAreaId = 0;
+    private string newEmpCode = string.Empty;
+    private string newFullName = string.Empty;
+    private string newDesignation = "General Mazdoor";
+    private List<int> newAdditionalSubAreaIds = new();
+    private int selectedAdditionalSubAreaId = 0;
+
+    // Modal state: Edit & Transfer
+    private bool showEditModal = false;
+    private string? editModalError;
+    private int editingEmployeeId = 0;
+    private string editEmpCode = string.Empty;
+    private string editFullName = string.Empty;
+    private string editDesignation = "General Mazdoor";
+    private int editSubAreaId = 0;
+    private List<int> editAdditionalSubAreaIds = new();
+    private int editSelectedAdditionalSubAreaId = 0;
+
+    // Modal state: View Worker Logs
+    private bool showLogsModal = false;
+    private bool isLoadingLogs = false;
+    private string logsWorkerEmpCode = string.Empty;
+    private string logsWorkerName = string.Empty;
+    private List<AttendanceLogDto> employeeLogs = new();
+
+    private async Task OpenEmployeeLogsModal(EmployeeDto emp)
+    {
+        logsWorkerEmpCode = emp.EmpCode;
+        logsWorkerName = emp.FullName;
+        showLogsModal = true;
+        isLoadingLogs = true;
+        employeeLogs.Clear();
+        try
+        {
+            employeeLogs = await AttendanceService.GetEmployeeLogsAsync(emp.EmpCode);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load punch logs for {emp.FullName}: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingLogs = false;
+        }
+    }
+
+    private void CloseEmployeeLogsModal()
+    {
+        showLogsModal = false;
+        employeeLogs.Clear();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        UserSession.OnChange += StateHasChangedCustom;
+        await LoadDataAsync();
+    }
+
+    public void Dispose()
+    {
+        UserSession.OnChange -= StateHasChangedCustom;
+    }
+
+    private async void StateHasChangedCustom()
+    {
+        await InvokeAsync(async () =>
+        {
+            subAreaFilter = 0;
+            await LoadDataAsync();
+            StateHasChanged();
+        });
+    }
+
+    private IEnumerable<SubAreaDto> PermittedSubAreas
+    {
+        get
+        {
+            if (UserSession.IsSuperAdmin)
+            {
+                return allSubAreas;
+            }
+            if (UserSession.IsAreaAdmin && UserSession.CurrentUser?.AreaId.HasValue == true)
+            {
+                return allSubAreas.Where(s => s.AreaId == UserSession.CurrentUser.AreaId.Value);
+            }
+            if (UserSession.IsUnitAdmin && UserSession.CurrentUser?.SubAreaId.HasValue == true)
+            {
+                return allSubAreas.Where(s => s.Id == UserSession.CurrentUser.SubAreaId.Value);
+            }
+            return allSubAreas;
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        try
+        {
+            allSubAreas = await AreaService.GetSubAreasAsync();
+
+            int? areaIdScope = UserSession.IsAreaAdmin ? UserSession.CurrentUser?.AreaId : null;
+            int? subAreaIdScope = UserSession.IsUnitAdmin ? UserSession.CurrentUser?.SubAreaId : null;
+
+            employees = await EmployeeService.GetEmployeesAsync(areaIdScope, subAreaIdScope);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load employees: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private IEnumerable<EmployeeDto> FilteredEmployees
+    {
+        get
+        {
+            var query = employees.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = query.Where(e =>
+                    e.EmpCode.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    e.FullName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    e.Designation.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    e.SubAreaName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (subAreaFilter > 0)
+            {
+                query = query.Where(e => e.SubAreaId == subAreaFilter);
+            }
+
+            return query;
+        }
+    }
+
+    private void AddLocationToNewWorker()
+    {
+        if (selectedAdditionalSubAreaId > 0 && selectedAdditionalSubAreaId != newSubAreaId && !newAdditionalSubAreaIds.Contains(selectedAdditionalSubAreaId))
+        {
+            newAdditionalSubAreaIds.Add(selectedAdditionalSubAreaId);
+            selectedAdditionalSubAreaId = 0;
+        }
+    }
+
+    private void RemoveLocationFromNewWorker(int subAreaId)
+    {
+        newAdditionalSubAreaIds.Remove(subAreaId);
+    }
+
+    private void AddLocationToEditWorker()
+    {
+        if (editSelectedAdditionalSubAreaId > 0 && editSelectedAdditionalSubAreaId != editSubAreaId && !editAdditionalSubAreaIds.Contains(editSelectedAdditionalSubAreaId))
+        {
+            editAdditionalSubAreaIds.Add(editSelectedAdditionalSubAreaId);
+            editSelectedAdditionalSubAreaId = 0;
+        }
+    }
+
+    private void RemoveLocationFromEditWorker(int subAreaId)
+    {
+        editAdditionalSubAreaIds.Remove(subAreaId);
+    }
+
+    private void OpenCreateModal()
+    {
+        newSubAreaId = PermittedSubAreas.FirstOrDefault()?.Id ?? 0;
+        newEmpCode = string.Empty;
+        newFullName = string.Empty;
+        newDesignation = "General Mazdoor";
+        newAdditionalSubAreaIds = new();
+        selectedAdditionalSubAreaId = 0;
+        modalError = null;
+        showCreateModal = true;
+    }
+
+    private void CloseCreateModal()
+    {
+        showCreateModal = false;
+        newAdditionalSubAreaIds = new();
+        selectedAdditionalSubAreaId = 0;
+        modalError = null;
+    }
+
+    private void OpenEditModal(EmployeeDto emp)
+    {
+        editingEmployeeId = emp.Id;
+        editEmpCode = emp.EmpCode;
+        editFullName = emp.FullName;
+        editDesignation = emp.Designation;
+        editSubAreaId = emp.SubAreaId;
+        editAdditionalSubAreaIds = emp.AdditionalSubAreaIds.ToList();
+        editSelectedAdditionalSubAreaId = 0;
+        editModalError = null;
+        showEditModal = true;
+    }
+
+    private void CloseEditModal()
+    {
+        showEditModal = false;
+        editAdditionalSubAreaIds = new();
+        editSelectedAdditionalSubAreaId = 0;
+        editModalError = null;
+    }
+
+    private async Task SaveEmployeeAsync()
+    {
+        modalError = null;
+
+        if (newSubAreaId <= 0)
+        {
+            modalError = "Please select a Colliery Unit.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newEmpCode))
+        {
+            modalError = "Employee ID is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newFullName))
+        {
+            modalError = "Full Name is required.";
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            var dto = new CreateEmployeeDto(newEmpCode.Trim().ToUpperInvariant(), newFullName.Trim(), newDesignation, newSubAreaId, newAdditionalSubAreaIds);
+            var result = await EmployeeService.CreateEmployeeAsync(dto);
+            successMessage = $"Worker '{result.FullName}' ({result.EmpCode}) onboarded successfully. Biometric registration: {(result.IsSyncedToEbios ? "Synced" : "Queued")}.";
+            showCreateModal = false;
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            modalError = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SaveEditEmployeeAsync()
+    {
+        editModalError = null;
+
+        if (string.IsNullOrWhiteSpace(editFullName))
+        {
+            editModalError = "Full Name is required.";
+            return;
+        }
+
+        if (editSubAreaId <= 0)
+        {
+            editModalError = "Please select a Colliery Unit.";
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            var dto = new UpdateEmployeeDto(editFullName.Trim(), editDesignation, editSubAreaId, editAdditionalSubAreaIds);
+            int? areaIdScope = UserSession.IsAreaAdmin ? UserSession.CurrentUser?.AreaId : null;
+
+            var (success, msg) = await EmployeeService.UpdateEmployeeAsync(editingEmployeeId, dto, areaIdScope);
+
+            if (success)
+            {
+                successMessage = msg;
+                showEditModal = false;
+                await LoadDataAsync();
+            }
+            else
+            {
+                editModalError = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            editModalError = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SyncEmployeeAsync(EmployeeDto emp)
+    {
+        try
+        {
+            var synced = await EmployeeService.SyncEmployeeAsync(emp.Id);
+            if (synced)
+            {
+                successMessage = $"Worker {emp.EmpCode} synchronized to biometric turnstiles.";
+                await LoadDataAsync();
+            }
+            else
+            {
+                errorMessage = $"Failed to synchronize worker {emp.EmpCode}.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Sync error: {ex.Message}";
+        }
+    }
+
+    private async Task ToggleStatusAsync(EmployeeDto emp)
+    {
+        try
+        {
+            var toggled = await EmployeeService.ToggleEmployeeStatusAsync(emp.Id);
+            if (toggled)
+            {
+                successMessage = $"Worker {emp.EmpCode} status updated.";
+                await LoadDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to update worker status: {ex.Message}";
+        }
+    }
+}

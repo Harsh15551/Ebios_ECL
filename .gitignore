@@ -1,0 +1,46 @@
+## ========================================================
+## Git Ignore for ECL eBioServer Integration Project
+## ========================================================
+
+# 1. Environment Variables & Secrets (CRITICAL - NEVER COMMIT)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+!.env.example
+
+# 2. Sensitive Local AppSettings Overrides
+appsettings.Development.json
+appsettings.Local.json
+appsettings.Production.json
+appsettings.*.local.json
+
+# 3. Build Results & Artifacts
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+_ReSharper*/
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# 4. IDE & Editor Specific Files
+.vs/
+.vscode/
+.idea/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.DotSettings.user
+
+# 5. OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini

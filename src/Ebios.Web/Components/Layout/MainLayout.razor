@@ -1,0 +1,94 @@
+@inherits LayoutComponentBase
+@inject UserSessionService UserSession
+@inject NavigationManager Navigation
+@implements IDisposable
+
+@if (!UserSession.IsAuthenticated)
+{
+    <div class="d-flex justify-content-center align-items-center min-vh-100 bg-light">
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted small">Redirecting to login...</p>
+        </div>
+    </div>
+}
+else
+{
+    <div class="page">
+        <div class="sidebar">
+            <NavMenu />
+        </div>
+
+        <main>
+            <div class="top-row px-4 d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center">
+                    <span class="fw-bold text-dark">Eastern Coalfields Limited</span>
+                    <span class="mx-2 text-muted">|</span>
+                    <span class="small text-muted">Central Biometric Attendance Portal</span>
+                </div>
+
+                <div class="d-flex align-items-center gap-3">
+                    <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">
+                        <span class="spinner-grow spinner-grow-sm me-1 text-success" style="width: 0.5rem; height: 0.5rem;" role="status"></span>
+                        eBios Online
+                    </span>
+
+                    <!-- Active User Profile & Logout -->
+                    <div class="d-flex align-items-center bg-white border rounded px-3 py-1 shadow-sm gap-2">
+                        <span class="small text-muted">Officer:</span>
+                        <strong class="text-dark small">@UserSession.CurrentUser?.FullName</strong>
+
+                        @if (UserSession.IsSuperAdmin)
+                        {
+                            <span class="badge bg-danger">HQ SuperAdmin</span>
+                        }
+                        else if (UserSession.IsAreaAdmin)
+                        {
+                            <span class="badge bg-primary">Area Admin (@UserSession.CurrentUser?.AreaName)</span>
+                        }
+                        else if (UserSession.IsUnitAdmin)
+                        {
+                            <span class="badge bg-info text-dark">Unit Manager (@UserSession.CurrentUser?.SubAreaName)</span>
+                        }
+
+                        <button class="btn btn-sm btn-outline-danger ms-2 py-0 px-2 fw-semibold" @onclick="HandleLogout" title="Sign out of current account">
+                            🚪 Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <article class="content px-4 py-3">
+                @Body
+            </article>
+        </main>
+    </div>
+}
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        UserSession.OnChange += StateHasChanged;
+        if (!UserSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("login");
+        }
+    }
+
+    private void HandleLogout()
+    {
+        UserSession.Logout();
+        Navigation.NavigateTo("login");
+    }
+
+    public void Dispose()
+    {
+        UserSession.OnChange -= StateHasChanged;
+    }
+}

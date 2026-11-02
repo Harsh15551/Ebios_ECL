@@ -1,0 +1,535 @@
+@page "/attendance"
+@rendermode InteractiveServer
+@inject IAttendanceService AttendanceService
+@inject IEmployeeService EmployeeService
+@inject IAreaService AreaService
+@inject UserSessionService UserSession
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>ECL - Attendance Logs & Biometric Punches</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h2 class="h3 fw-bold mb-1">Attendance & Biometric Logs</h2>
+            @if (UserSession.IsSuperAdmin)
+            {
+                <span class="badge bg-danger">ECL HQ Global Scope</span>
+            }
+            else if (UserSession.IsAreaAdmin)
+            {
+                <span class="badge bg-primary">@(UserSession.CurrentUser?.AreaName) Area Scope</span>
+            }
+            else
+            {
+                <span class="badge bg-info text-dark">@(UserSession.CurrentUser?.SubAreaName) Unit Scope</span>
+            }
+        </div>
+        <p class="text-muted mb-0">
+            Real-time biometric turnstile punches pushed from eBioServer.
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadLogsAsync" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                <span>Refreshing...</span>
+            }
+            else
+            {
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                    <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                </svg>
+                <span>Refresh</span>
+            }
+        </button>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Success:</strong> @successMessage
+        <button type="button" class="btn-close" @onclick="@(() => successMessage = null)"></button>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Error:</strong> @errorMessage
+        <button type="button" class="btn-close" @onclick="@(() => errorMessage = null)"></button>
+    </div>
+}
+
+<!-- KPI Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-md-3">
+        <div class="card h-100 border-start border-primary border-4 shadow-sm">
+            <div class="card-body">
+                <div class="text-muted small fw-semibold text-uppercase">Total Punches</div>
+                <div class="h3 fw-bold mb-0 text-dark">@logs.Count</div>
+                <small class="text-muted">In current filter view</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-md-3">
+        <div class="card h-100 border-start border-success border-4 shadow-sm">
+            <div class="card-body">
+                <div class="text-muted small fw-semibold text-uppercase">Verified Workers</div>
+                <div class="h3 fw-bold mb-0 text-success">@logs.Count(l => l.Status == "Verified")</div>
+                <small class="text-muted">Recognized employees</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-md-3">
+        <div class="card h-100 border-start border-warning border-4 shadow-sm">
+            <div class="card-body">
+                <div class="text-muted small fw-semibold text-uppercase">Flagged Punches</div>
+                <div class="h3 fw-bold mb-0 text-warning">@flaggedCount</div>
+                <small class="text-muted">Unregistered worker codes</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-sm-6 col-md-3">
+        <div class="card h-100 border-start border-secondary border-4 shadow-sm">
+            <div class="card-body">
+                <div class="text-muted small fw-semibold text-uppercase">Dismissed</div>
+                <div class="h3 fw-bold mb-0 text-secondary">@logs.Count(l => l.Status == "Dismissed")</div>
+                <small class="text-muted">Visitors or test scans</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Flagged Alert Banner -->
+@if (flaggedCount > 0)
+{
+    <div class="alert alert-warning shadow-sm d-flex align-items-center justify-content-between mb-4">
+        <div class="d-flex align-items-center">
+            <span class="fs-4 me-3">⚠️</span>
+            <div>
+                <strong class="d-block">Action Required: @flaggedCount Flagged / Unrecognized Punches Detected</strong>
+                <span class="small text-muted">Workers have swiped on colliery turnstiles whose employee records are not yet onboarded. You can onboard them or dismiss invalid scans.</span>
+            </div>
+        </div>
+        <button class="btn btn-warning btn-sm fw-bold px-3" @onclick="@(() => statusFilter = "Flagged")">
+            Review Flagged Punches
+        </button>
+    </div>
+}
+
+<!-- Filters Bar -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-12 col-md-4">
+                <input type="text" class="form-control form-control-sm" placeholder="Search by Worker Code, Name, or Machine..." @bind="searchTerm" @bind:event="oninput" />
+            </div>
+
+            <div class="col-6 col-md-3">
+                <select class="form-select form-select-sm" @bind="subAreaFilter">
+                    <option value="0">All Colliery Units</option>
+                    @foreach (var sub in permittedSubAreas)
+                    {
+                        <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode)</option>
+                    }
+                </select>
+            </div>
+
+            <div class="col-6 col-md-2">
+                <select class="form-select form-select-sm" @bind="statusFilter">
+                    <option value="All">All Statuses</option>
+                    <option value="Verified">Verified Only</option>
+                    <option value="Flagged">Flagged Only</option>
+                    <option value="Dismissed">Dismissed Only</option>
+                </select>
+            </div>
+
+            <div class="col-12 col-md-3 d-flex gap-1">
+                <input type="date" class="form-control form-control-sm" @bind="filterFromDate" />
+                <span class="align-self-center text-muted small">to</span>
+                <input type="date" class="form-control form-control-sm" @bind="filterToDate" />
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Logs Table -->
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Loading attendance punches...</p>
+    </div>
+}
+else
+{
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 140px;">Punch Time</th>
+                        <th style="width: 130px;">Worker Code</th>
+                        <th>Worker Name</th>
+                        <th style="width: 100px;">Direction</th>
+                        <th>Colliery Unit / Area</th>
+                        <th>Terminal / Hardware</th>
+                        <th style="width: 130px;">Verification</th>
+                        <th style="width: 120px;">Status</th>
+                        <th style="width: 150px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!FilteredLogs.Any())
+                    {
+                        <tr>
+                            <td colspan="9" class="text-center py-5 text-muted">
+                                <div>No biometric punches found matching your criteria.</div>
+                                <small>Punches will appear here automatically when biometric machines push via webhook.</small>
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var log in FilteredLogs)
+                        {
+                            <tr class="@(log.IsFlagged ? "table-warning bg-opacity-25" : "")">
+                                <td class="font-monospace small">
+                                    <div class="fw-bold text-dark">@log.LogDate.ToString("HH:mm:ss")</div>
+                                    <small class="text-muted">@log.LogDate.ToString("dd MMM yyyy")</small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-dark font-monospace fs-6">@log.EmpCode</span>
+                                </td>
+                                <td>
+                                    <span class="fw-semibold text-dark">@log.EmployeeName</span>
+                                </td>
+                                <td>
+                                    @if (log.Direction.Equals("IN", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                            ↓ IN
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-info-subtle text-info border border-info-subtle">
+                                            ↑ OUT
+                                        </span>
+                                    }
+                                </td>
+                                <td>
+                                    <div>@log.SubAreaName</div>
+                                    <small class="text-muted">@log.AreaName</small>
+                                </td>
+                                <td>
+                                    <div class="fw-semibold text-dark">@log.DeviceName</div>
+                                    <small class="font-monospace text-muted">SN: @log.SerialNumber</small>
+                                </td>
+                                <td class="text-muted small">
+                                    @(string.IsNullOrWhiteSpace(log.VerificationType) ? "Biometric" : log.VerificationType)
+                                </td>
+                                <td>
+                                    @if (log.Status == "Verified")
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                            ● Verified
+                                        </span>
+                                    }
+                                    else if (log.Status == "Flagged")
+                                    {
+                                        <span class="badge bg-warning-subtle text-warning border border-warning-subtle fw-bold">
+                                            ⚠️ Flagged
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">
+                                            Dismissed
+                                        </span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    @if (log.IsFlagged)
+                                    {
+                                        <div class="d-flex justify-content-end gap-1">
+                                            <button class="btn btn-sm btn-primary py-0 px-2" title="Quick Onboard Worker" @onclick="@(() => OpenQuickOnboardModal(log))">
+                                                ➕ Onboard
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" title="Dismiss invalid punch" @onclick="@(() => DismissPunchAsync(log.EmpCode))">
+                                                Dismiss
+                                            </button>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small fst-italic">Logged</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Quick Onboard Modal for Flagged Worker -->
+@if (showOnboardModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">➕ Onboard Flagged Worker</h5>
+                    <button type="button" class="btn-close" @onclick="CloseOnboardModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info py-2 small mb-3">
+                        This worker swiped on turnstiles with Employee Code <strong>@onboardEmpCode</strong>. Registering them here will retroactively link all their past punches!
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(onboardError))
+                    {
+                        <div class="alert alert-danger py-2 small">@onboardError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Employee ID / Worker Code</label>
+                        <input type="text" class="form-control font-monospace" @bind="onboardEmpCode" readonly />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Full Legal Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Ramesh Chandra Verma" @bind="onboardFullName" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Designation / Role</label>
+                        <input type="text" class="form-control" placeholder="e.g. General Mazdoor, Incline Loader" @bind="onboardDesignation" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Assigned Colliery Unit <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="onboardSubAreaId">
+                            <option value="0">-- Select Primary Colliery Unit --</option>
+                            @foreach (var sub in permittedSubAreas)
+                            {
+                                <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseOnboardModal" disabled="@isOnboarding">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveOnboardedWorkerAsync" disabled="@isOnboarding">
+                        @if (isOnboarding)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Onboarding...</span>
+                        }
+                        else
+                        {
+                            <span>Register & Link Punches</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AttendanceLogDto> logs = new();
+    private List<SubAreaDto> permittedSubAreas = new();
+    private bool isLoading = true;
+    private int flaggedCount = 0;
+
+    private string? successMessage;
+    private string? errorMessage;
+
+    // Filters
+    private string searchTerm = string.Empty;
+    private int subAreaFilter = 0;
+    private string statusFilter = "All";
+    private DateTime? filterFromDate;
+    private DateTime? filterToDate;
+
+    // Modal state for quick onboard
+    private bool showOnboardModal = false;
+    private bool isOnboarding = false;
+    private string? onboardError;
+    private string onboardEmpCode = string.Empty;
+    private string onboardFullName = string.Empty;
+    private string onboardDesignation = "General Mazdoor";
+    private int onboardSubAreaId = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        UserSession.OnChange += StateHasChanged;
+        await LoadMetadataAsync();
+        await LoadLogsAsync();
+    }
+
+    private async Task LoadMetadataAsync()
+    {
+        try
+        {
+            var allSubAreas = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
+            if (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
+            {
+                permittedSubAreas = allSubAreas.Where(s => s.Id == UserSession.CurrentSubAreaId.Value).ToList();
+            }
+            else
+            {
+                permittedSubAreas = allSubAreas;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load filter metadata: {ex.Message}";
+        }
+    }
+
+    private async Task LoadLogsAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var filter = new AttendanceFilterDto(
+                AreaId: UserSession.CurrentAreaId,
+                SubAreaId: subAreaFilter > 0 ? subAreaFilter : UserSession.CurrentSubAreaId,
+                Status: statusFilter,
+                FromDate: filterFromDate,
+                ToDate: filterToDate,
+                SearchTerm: searchTerm
+            );
+
+            logs = await AttendanceService.GetLogsAsync(filter, UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
+            flaggedCount = await AttendanceService.GetFlaggedCountAsync(UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load attendance logs: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private IEnumerable<AttendanceLogDto> FilteredLogs
+    {
+        get
+        {
+            var q = logs.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                string s = searchTerm.Trim().ToLower();
+                q = q.Where(l => l.EmpCode.ToLower().Contains(s) ||
+                                 (l.EmployeeName != null && l.EmployeeName.ToLower().Contains(s)) ||
+                                 (l.DeviceName != null && l.DeviceName.ToLower().Contains(s)) ||
+                                 l.SerialNumber.ToLower().Contains(s));
+            }
+
+            if (subAreaFilter > 0)
+            {
+                q = q.Where(l => l.SubAreaId == subAreaFilter);
+            }
+
+            if (!string.IsNullOrWhiteSpace(statusFilter) && !statusFilter.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                q = q.Where(l => l.Status == statusFilter);
+            }
+
+            return q;
+        }
+    }
+
+    private void OpenQuickOnboardModal(AttendanceLogDto log)
+    {
+        onboardEmpCode = log.EmpCode;
+        onboardFullName = string.Empty;
+        onboardDesignation = "General Mazdoor";
+        onboardSubAreaId = log.SubAreaId ?? (permittedSubAreas.FirstOrDefault()?.Id ?? 0);
+        onboardError = null;
+        showOnboardModal = true;
+    }
+
+    private void CloseOnboardModal()
+    {
+        showOnboardModal = false;
+        onboardError = null;
+    }
+
+    private async Task SaveOnboardedWorkerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(onboardFullName))
+        {
+            onboardError = "Please enter worker full name.";
+            return;
+        }
+
+        if (onboardSubAreaId <= 0)
+        {
+            onboardError = "Please select a colliery unit.";
+            return;
+        }
+
+        isOnboarding = true;
+        onboardError = null;
+        try
+        {
+            var dto = new CreateEmployeeDto(
+                onboardEmpCode,
+                onboardFullName,
+                onboardDesignation,
+                onboardSubAreaId,
+                new List<int>()
+            );
+
+            var created = await EmployeeService.CreateEmployeeAsync(dto);
+            successMessage = $"Worker '{created.FullName}' ({created.EmpCode}) onboarded successfully! Past punches linked.";
+            showOnboardModal = false;
+            await LoadLogsAsync();
+        }
+        catch (Exception ex)
+        {
+            onboardError = ex.Message;
+        }
+        finally
+        {
+            isOnboarding = false;
+        }
+    }
+
+    private async Task DismissPunchAsync(string empCode)
+    {
+        try
+        {
+            await AttendanceService.DismissFlaggedPunchesAsync(empCode);
+            successMessage = $"Flagged punches for worker code '{empCode}' marked as Dismissed.";
+            await LoadLogsAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to dismiss punch: {ex.Message}";
+        }
+    }
+
+    public void Dispose()
+    {
+        UserSession.OnChange -= StateHasChanged;
+    }
+}
+

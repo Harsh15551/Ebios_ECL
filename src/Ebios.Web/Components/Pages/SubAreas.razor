@@ -1,0 +1,426 @@
+@page "/subareas"
+@rendermode InteractiveServer
+@inject IAreaService AreaService
+@inject IEbiosSoapService EbiosSoapService
+
+<PageTitle>ECL - Sub-Areas & Colliery Units</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="h3 fw-bold mb-1">ECL Sub-Areas & Mining Units</h2>
+        <p class="text-muted mb-0">Collieries, pits, and workshops mapped to eBios Biometric Locations</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadDataAsync" disabled="@isLoading">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+            </svg>
+            Refresh
+        </button>
+        <button class="btn btn-primary btn-sm" @onclick="OpenCreateModal">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+            </svg>
+            Add Colliery Unit
+        </button>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Success:</strong> @successMessage
+        <button type="button" class="btn-close" @onclick="@(() => successMessage = null)"></button>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Error:</strong> @errorMessage
+        <button type="button" class="btn-close" @onclick="@(() => errorMessage = null)"></button>
+    </div>
+}
+
+<!-- Filters Bar -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-5">
+                <div class="input-group">
+                    <span class="input-group-text bg-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
+                            <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                        </svg>
+                    </span>
+                    <input type="text" class="form-control" placeholder="Search by unit code or name..." @bind="searchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="col-12 col-md-4">
+                <select class="form-select" @bind="selectedAreaId" @bind:after="OnFilterChangedAsync">
+                    <option value="0">All Mining Areas (@areas.Count Areas)</option>
+                    @foreach (var area in areas)
+                    {
+                        <option value="@area.Id">@area.AreaName (@area.AreaCode)</option>
+                    }
+                </select>
+            </div>
+
+            <div class="col-12 col-md-3">
+                <select class="form-select" @bind="syncFilter">
+                    <option value="all">All Sync Statuses</option>
+                    <option value="synced">Synced to eBios Only</option>
+                    <option value="pending">Pending Sync Only</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Loading Sub-Areas and synchronization states...</p>
+    </div>
+}
+else
+{
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 140px;">Unit Code</th>
+                        <th>Colliery / Unit Description</th>
+                        <th>Parent Mining Area</th>
+                        <th style="width: 180px;">eBios Sync Status</th>
+                        <th style="width: 160px;">Last Synced</th>
+                        <th style="width: 140px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!FilteredSubAreas.Any())
+                    {
+                        <tr>
+                            <td colspan="6" class="text-center py-4 text-muted">
+                                No sub-areas match your current filter.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var sub in FilteredSubAreas)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="badge bg-dark font-monospace fs-6">@sub.SubAreaCode</span>
+                                </td>
+                                <td class="fw-semibold text-dark">
+                                    @sub.SubAreaName
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary-subtle text-dark border">@sub.AreaName</span>
+                                </td>
+                                <td>
+                                    @if (sub.IsSyncedToEbios)
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                            ● Synced
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                            ● Sync Failed
+                                        </span>
+                                    }
+                                </td>
+                                <td class="text-muted small">
+                                    @if (sub.LastSyncedAt.HasValue)
+                                    {
+                                        <span>@sub.LastSyncedAt.Value.ToString("dd MMM yyyy HH:mm")</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted fst-italic">Never</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    @if (sub.IsSyncedToEbios)
+                                    {
+                                        <span class="text-muted small">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="text-success me-1" viewBox="0 0 16 16">
+                                                <path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425a.247.247 0 0 1 .02-.022Z"/>
+                                            </svg>
+                                            Active in eBios
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="@(() => SyncSingleSubAreaAsync(sub))" disabled="@syncingIds.Contains(sub.Id)">
+                                            @if (syncingIds.Contains(sub.Id))
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span>Retry Sync</span>
+                                            }
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Add Sub-Area Modal -->
+@if (showCreateModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Add New Mining Sub-Area Unit</h5>
+                    <button type="button" class="btn-close" @onclick="CloseCreateModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(modalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@modalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Parent Mining Area <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="newAreaId">
+                            <option value="0">-- Select Mining Area --</option>
+                            @foreach (var area in areas)
+                            {
+                                <option value="@area.Id">@area.AreaName (@area.AreaCode)</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Sub-Area Code <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control font-monospace" placeholder="e.g. SLP-PIT1, SRI-UG1" @bind="newSubAreaCode" />
+                        <small class="text-muted">Maps directly to eBios LocationCode in webservice.asmx</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Sub-Area / Colliery Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Pit No. 1 Underground Colliery" @bind="newSubAreaName" />
+                    </div>
+
+                    <div class="alert alert-info py-2 small mb-0">
+                        <strong>eBios Auto-Sync:</strong> Submitting will automatically send a SOAP <code>UpdateLocation</code> payload to the configured eBioServer endpoint.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseCreateModal" disabled="@isSaving">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveSubAreaAsync" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Syncing & Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Create & Sync Unit</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "areaId")]
+    public int? AreaId { get; set; }
+
+    private List<AreaDto> areas = new();
+    private List<SubAreaDto> subAreas = new();
+    private HashSet<int> syncingIds = new();
+    private bool isLoading = true;
+
+    // Filter states
+    private string searchTerm = string.Empty;
+    private int selectedAreaId = 0;
+    private string syncFilter = "all";
+
+    // Alerts
+    private string? successMessage;
+    private string? errorMessage;
+
+    // Modal state
+    private bool showCreateModal = false;
+    private bool isSaving = false;
+    private string? modalError;
+    private int newAreaId = 0;
+    private string newSubAreaCode = string.Empty;
+    private string newSubAreaName = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AreaId.HasValue && AreaId.Value > 0 && selectedAreaId != AreaId.Value)
+        {
+            selectedAreaId = AreaId.Value;
+            await LoadSubAreasInternalAsync();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        try
+        {
+            areas = await AreaService.GetAllAreasAsync();
+            await LoadSubAreasInternalAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load data: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnFilterChangedAsync()
+    {
+        isLoading = true;
+        await LoadSubAreasInternalAsync();
+        isLoading = false;
+    }
+
+    private async Task LoadSubAreasInternalAsync()
+    {
+        int? areaIdFilter = selectedAreaId > 0 ? selectedAreaId : null;
+        subAreas = await AreaService.GetSubAreasAsync(areaIdFilter);
+    }
+
+    private IEnumerable<SubAreaDto> FilteredSubAreas
+    {
+        get
+        {
+            var query = subAreas.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = query.Where(s =>
+                    s.SubAreaCode.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    s.SubAreaName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    s.AreaName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (syncFilter == "synced")
+            {
+                query = query.Where(s => s.IsSyncedToEbios);
+            }
+            else if (syncFilter == "pending")
+            {
+                query = query.Where(s => !s.IsSyncedToEbios);
+            }
+
+            return query;
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        newAreaId = selectedAreaId > 0 ? selectedAreaId : (areas.FirstOrDefault()?.Id ?? 0);
+        newSubAreaCode = string.Empty;
+        newSubAreaName = string.Empty;
+        modalError = null;
+        showCreateModal = true;
+    }
+
+    private void CloseCreateModal()
+    {
+        showCreateModal = false;
+        modalError = null;
+    }
+
+    private async Task SaveSubAreaAsync()
+    {
+        modalError = null;
+        if (newAreaId <= 0)
+        {
+            modalError = "Please select a Parent Mining Area.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newSubAreaCode))
+        {
+            modalError = "Sub-Area Code is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newSubAreaName))
+        {
+            modalError = "Sub-Area Name is required.";
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            var dto = new CreateSubAreaDto(newSubAreaCode.Trim().ToUpperInvariant(), newSubAreaName.Trim(), newAreaId);
+            var result = await AreaService.CreateSubAreaAsync(dto);
+            successMessage = $"Sub-Area '{result.SubAreaName}' ({result.SubAreaCode}) created successfully. eBios sync status: {(result.IsSyncedToEbios ? "Synced" : "Pending")}.";
+            showCreateModal = false;
+            await LoadSubAreasInternalAsync();
+        }
+        catch (Exception ex)
+        {
+            modalError = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SyncSingleSubAreaAsync(SubAreaDto sub)
+    {
+        syncingIds.Add(sub.Id);
+        try
+        {
+            var updateDto = new CreateSubAreaDto(sub.SubAreaCode, sub.SubAreaName, sub.AreaId);
+            var updated = await AreaService.UpdateSubAreaAsync(sub.Id, updateDto);
+
+            if (updated)
+            {
+                successMessage = $"Triggered eBios SOAP sync for unit {sub.SubAreaCode}.";
+                await LoadSubAreasInternalAsync();
+            }
+            else
+            {
+                errorMessage = $"Failed to re-sync unit {sub.SubAreaCode}.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error during SOAP sync for {sub.SubAreaCode}: {ex.Message}";
+        }
+        finally
+        {
+            syncingIds.Remove(sub.Id);
+        }
+    }
+}
+

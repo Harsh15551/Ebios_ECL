@@ -1,0 +1,461 @@
+@page "/users"
+@rendermode InteractiveServer
+@inject IUserService UserService
+@inject IAreaService AreaService
+
+<PageTitle>ECL - User & Role Management</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="h3 fw-bold mb-1">Personnel & Access Control</h2>
+        <p class="text-muted mb-0">Role-based access management for ECL HQ Administrators, Area Personnel Managers (APMs), and Unit Managers (UPMs)</p>
+    </div>
+    <button class="btn btn-primary" @onclick="OpenCreateModal">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+        </svg>
+        Add New User
+    </button>
+</div>
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Success:</strong> @successMessage
+        <button type="button" class="btn-close" @onclick="@(() => successMessage = null)"></button>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Error:</strong> @errorMessage
+        <button type="button" class="btn-close" @onclick="@(() => errorMessage = null)"></button>
+    </div>
+}
+
+<!-- Filters Bar -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text bg-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
+                            <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                        </svg>
+                    </span>
+                    <input type="text" class="form-control" placeholder="Search by name, username, or email..." @bind="searchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="col-12 col-md-4">
+                <select class="form-select" @bind="roleFilter">
+                    <option value="0">All Roles</option>
+                    <option value="1">SuperAdmin (ECL HQ)</option>
+                    <option value="2">Area Personnel Manager (APM)</option>
+                    <option value="3">Unit Personnel Manager (UPM)</option>
+                </select>
+            </div>
+
+            <div class="col-12 col-md-2 text-md-end text-muted small">
+                <strong>@FilteredUsers.Count()</strong> Users
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Loading ECL personnel records...</p>
+    </div>
+}
+else
+{
+    <div class="card shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 140px;">Username</th>
+                        <th>Full Name & Email</th>
+                        <th style="width: 160px;">Role</th>
+                        <th>Assigned Jurisdiction</th>
+                        <th style="width: 100px;">Status</th>
+                        <th style="width: 140px;">Created On</th>
+                        <th style="width: 120px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!FilteredUsers.Any())
+                    {
+                        <tr>
+                            <td colspan="7" class="text-center py-4 text-muted">
+                                No users match your filter criteria.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var user in FilteredUsers)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="fw-bold text-dark font-monospace">@user.Username</span>
+                                </td>
+                                <td>
+                                    <div class="fw-semibold">@user.FullName</div>
+                                    <small class="text-muted">@user.Email</small>
+                                </td>
+                                <td>
+                                    @switch (user.Role)
+                                    {
+                                        case UserRole.SuperAdmin:
+                                            <span class="badge bg-danger">SuperAdmin</span>
+                                            break;
+                                        case UserRole.AreaPersonnelManager:
+                                            <span class="badge bg-primary">APM</span>
+                                            break;
+                                        case UserRole.UnitPersonnelManager:
+                                            <span class="badge bg-info text-dark">UPM</span>
+                                            break;
+                                    }
+                                </td>
+                                <td>
+                                    @if (user.Role == UserRole.SuperAdmin)
+                                    {
+                                        <span class="text-muted">ECL HQ (All 13 Areas)</span>
+                                    }
+                                    else if (user.Role == UserRole.AreaPersonnelManager)
+                                    {
+                                        <span class="badge bg-light text-dark border">
+                                            🏢 @(user.AreaName ?? "Unassigned")
+                                        </span>
+                                    }
+                                    else if (user.Role == UserRole.UnitPersonnelManager)
+                                    {
+                                        <span class="badge bg-light text-dark border">
+                                            ⛏️ @(user.SubAreaName ?? "Unassigned Unit")
+                                        </span>
+                                        @if (!string.IsNullOrEmpty(user.AreaName))
+                                        {
+                                            <small class="text-muted ms-1">(@user.AreaName)</small>
+                                        }
+                                    }
+                                </td>
+                                <td>
+                                    @if (user.IsActive)
+                                    {
+                                        <span class="badge bg-success">Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary">Disabled</span>
+                                    }
+                                </td>
+                                <td class="text-muted small">
+                                    @user.CreatedAt.ToString("dd MMM yyyy")
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm @(user.IsActive ? "btn-outline-danger" : "btn-outline-success")" 
+                                            @onclick="@(() => ToggleStatusAsync(user))"
+                                            disabled="@(user.Username == "admin")"
+                                            title="@(user.Username == "admin" ? "Default SuperAdmin cannot be disabled" : (user.IsActive ? "Disable User" : "Enable User"))">
+                                        @(user.IsActive ? "Disable" : "Enable")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Create User Modal -->
+@if (showCreateModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Add ECL Personnel Account</h5>
+                    <button type="button" class="btn-close" @onclick="CloseCreateModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(modalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@modalError</div>
+                    }
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Username <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" placeholder="e.g. apm_salanpur" @bind="newUsername" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Temporary Password <span class="text-danger">*</span></label>
+                            <input type="password" class="form-control" placeholder="••••••••" @bind="newPassword" />
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Full Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Rajesh Kumar" @bind="newFullName" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Email Address <span class="text-danger">*</span></label>
+                        <input type="email" class="form-control" placeholder="e.g. rajesh.kumar@ecl.gov.in" @bind="newEmail" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Assigned Role <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="newRole" @bind:after="OnRoleChanged">
+                            <option value="@UserRole.AreaPersonnelManager">Area Personnel Manager (APM)</option>
+                            <option value="@UserRole.UnitPersonnelManager">Unit Personnel Manager (UPM)</option>
+                            <option value="@UserRole.SuperAdmin">SuperAdmin (ECL HQ)</option>
+                        </select>
+                    </div>
+
+                    @if (newRole == UserRole.AreaPersonnelManager)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Assigned Mining Area <span class="text-danger">*</span></label>
+                            <select class="form-select" @bind="newAreaId">
+                                <option value="0">-- Select Mining Area --</option>
+                                @foreach (var area in areas)
+                                {
+                                    <option value="@area.Id">@area.AreaName (@area.AreaCode)</option>
+                                }
+                            </select>
+                            <small class="text-muted">APMs manage all Sub-Areas and Units under this selected Area.</small>
+                        </div>
+                    }
+                    else if (newRole == UserRole.UnitPersonnelManager)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Assigned Sub-Area / Colliery Unit <span class="text-danger">*</span></label>
+                            <select class="form-select" @bind="newSubAreaId">
+                                <option value="0">-- Select Sub-Area Unit --</option>
+                                @foreach (var sub in subAreas)
+                                {
+                                    <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
+                                }
+                            </select>
+                            <small class="text-muted">UPMs have restricted access strictly to their single assigned Sub-Area.</small>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseCreateModal" disabled="@isSaving">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveUserAsync" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Creating Account...</span>
+                        }
+                        else
+                        {
+                            <span>Create Account</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<UserDto> users = new();
+    private List<AreaDto> areas = new();
+    private List<SubAreaDto> subAreas = new();
+    private bool isLoading = true;
+
+    // Filters
+    private string searchTerm = string.Empty;
+    private int roleFilter = 0;
+
+    // Alerts
+    private string? successMessage;
+    private string? errorMessage;
+
+    // Modal state
+    private bool showCreateModal = false;
+    private bool isSaving = false;
+    private string? modalError;
+    private string newUsername = string.Empty;
+    private string newFullName = string.Empty;
+    private string newEmail = string.Empty;
+    private string newPassword = string.Empty;
+    private UserRole newRole = UserRole.AreaPersonnelManager;
+    private int newAreaId = 0;
+    private int newSubAreaId = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        try
+        {
+            users = await UserService.GetUsersAsync();
+            areas = await AreaService.GetAllAreasAsync();
+            subAreas = await AreaService.GetSubAreasAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load personnel data: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private IEnumerable<UserDto> FilteredUsers
+    {
+        get
+        {
+            var query = users.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = query.Where(u =>
+                    u.Username.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    u.FullName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    u.Email.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (roleFilter > 0)
+            {
+                query = query.Where(u => (int)u.Role == roleFilter);
+            }
+
+            return query;
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        newUsername = string.Empty;
+        newFullName = string.Empty;
+        newEmail = string.Empty;
+        newPassword = string.Empty;
+        newRole = UserRole.AreaPersonnelManager;
+        newAreaId = areas.FirstOrDefault()?.Id ?? 0;
+        newSubAreaId = subAreas.FirstOrDefault()?.Id ?? 0;
+        modalError = null;
+        showCreateModal = true;
+    }
+
+    private void CloseCreateModal()
+    {
+        showCreateModal = false;
+        modalError = null;
+    }
+
+    private void OnRoleChanged()
+    {
+        if (newRole == UserRole.AreaPersonnelManager && newAreaId == 0)
+        {
+            newAreaId = areas.FirstOrDefault()?.Id ?? 0;
+        }
+        else if (newRole == UserRole.UnitPersonnelManager && newSubAreaId == 0)
+        {
+            newSubAreaId = subAreas.FirstOrDefault()?.Id ?? 0;
+        }
+    }
+
+    private async Task SaveUserAsync()
+    {
+        modalError = null;
+
+        if (string.IsNullOrWhiteSpace(newUsername))
+        {
+            modalError = "Username is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newFullName))
+        {
+            modalError = "Full Name is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newEmail))
+        {
+            modalError = "Email is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
+        {
+            modalError = "Password must be at least 6 characters.";
+            return;
+        }
+
+        if (newRole == UserRole.AreaPersonnelManager && newAreaId <= 0)
+        {
+            modalError = "Please select an assigned Mining Area for this APM.";
+            return;
+        }
+
+        if (newRole == UserRole.UnitPersonnelManager && newSubAreaId <= 0)
+        {
+            modalError = "Please select an assigned Sub-Area / Unit for this UPM.";
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            var dto = new CreateUserDto(
+                newUsername.Trim(),
+                newFullName.Trim(),
+                newEmail.Trim(),
+                newPassword,
+                newRole,
+                newRole == UserRole.AreaPersonnelManager ? newAreaId : null,
+                newRole == UserRole.UnitPersonnelManager ? newSubAreaId : null
+            );
+
+            var created = await UserService.CreateUserAsync(dto);
+            successMessage = $"User account '{created.Username}' ({created.Role}) created successfully.";
+            showCreateModal = false;
+            users = await UserService.GetUsersAsync();
+        }
+        catch (Exception ex)
+        {
+            modalError = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ToggleStatusAsync(UserDto user)
+    {
+        try
+        {
+            var toggled = await UserService.ToggleUserStatusAsync(user.Id);
+            if (toggled)
+            {
+                successMessage = $"User '{user.Username}' status updated.";
+                users = await UserService.GetUsersAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to change user status: {ex.Message}";
+        }
+    }
+}
+

@@ -1,0 +1,402 @@
+@page "/"
+@rendermode InteractiveServer
+@inject IAreaService AreaService
+@inject IUserService UserService
+@inject IDeviceService DeviceService
+@inject IEmployeeService EmployeeService
+@inject UserSessionService UserSession
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>ECL eBios - Dashboard</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        @if (UserSession.IsSuperAdmin)
+        {
+            <h2 class="h3 fw-bold mb-1">Eastern Coalfields Limited — ECL HQ</h2>
+            <p class="text-muted mb-0">Central Biometric Attendance & Colliery Workforce Management Portal (HQ Scope - All 13 Mining Areas)</p>
+        }
+        else if (UserSession.IsAreaAdmin)
+        {
+            <h2 class="h3 fw-bold mb-1">@(UserSession.CurrentUser?.AreaName ?? "Mining Area") — Regional Console</h2>
+            <p class="text-muted mb-0">Colliery Units & Biometric Attendance Management for @(UserSession.CurrentUser?.AreaName ?? "this Mining Area")</p>
+        }
+        else if (UserSession.IsUnitAdmin)
+        {
+            <h2 class="h3 fw-bold mb-1">@(UserSession.CurrentUser?.SubAreaName ?? "Colliery Unit") — Mine Gate Console</h2>
+            <p class="text-muted mb-0">Colliery Pit Gate Biometric Readers & Worker Roster for @(UserSession.CurrentUser?.SubAreaName ?? "this Unit")</p>
+        }
+        else
+        {
+            <h2 class="h3 fw-bold mb-1">Eastern Coalfields Limited</h2>
+            <p class="text-muted mb-0">Central Biometric Attendance & Colliery Workforce Management Portal</p>
+        }
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadDashboardDataAsync" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                <span>Refreshing...</span>
+            }
+            else
+            {
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                    <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                </svg>
+                <span>Refresh</span>
+            }
+        </button>
+        <button class="btn btn-primary btn-sm" @onclick="@(() => Navigation.NavigateTo("employees"))">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+            </svg>
+            Onboard Worker
+        </button>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Loading biometric attendance and workforce statistics...</p>
+    </div>
+}
+else
+{
+    <!-- 1. Metric KPI Cards -->
+    <div class="row g-3 mb-4">
+        <!-- Employees -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="card h-100 border-start border-primary border-4 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small fw-semibold text-uppercase">Workers & Miners</div>
+                            <div class="h2 fw-bold mb-0 text-dark">@employees.Count</div>
+                            <small class="text-muted">@employees.Count(e => e.IsSyncedToEbios) Biometric Synced</small>
+                        </div>
+                        <div class="stat-icon-box bg-primary-subtle text-primary">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8Zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002a.274.274 0 0 1-.014.002H7.022ZM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM6.736 9.486l-.853-.426A4.975 4.975 0 0 0 3 10.5c-1.424 0-2.477.72-3.003 1.583A.5.5 0 0 0 .5 13h5.45c-.092-.323-.15-.662-.15-1.016 0-.86.257-1.68.836-2.498ZM2 5.5a2.5 2.5 0 1 1 5 0 2.5 2.5 0 0 1-5 0Z"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Biometric Devices -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="card h-100 border-start border-success border-4 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small fw-semibold text-uppercase">Biometric Devices</div>
+                            <div class="h2 fw-bold mb-0 text-success">@devices.Count</div>
+                            <small class="text-muted">Turnstiles & Readers</small>
+                        </div>
+                        <div class="stat-icon-box bg-success-subtle text-success">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M11 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h6zM5 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H5z"/>
+                                <path d="M8 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (UserSession.IsSuperAdmin)
+        {
+            <!-- Mining Areas (HQ SuperAdmin Only) -->
+            <div class="col-12 col-sm-6 col-xl">
+                <div class="card h-100 border-start border-secondary border-4 shadow-sm">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <div class="text-muted small fw-semibold text-uppercase">Mining Areas</div>
+                                <div class="h2 fw-bold mb-0 text-dark">@areas.Count</div>
+                                <small class="text-muted">Target: 13 Total Areas</small>
+                            </div>
+                            <div class="stat-icon-box bg-secondary-subtle text-dark">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" viewBox="0 0 16 16">
+                                    <path d="M14.763.075A.5.5 0 0 1 15 .5v15a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5V14h-1v1.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V10a.5.5 0 0 1 .342-.474L6 7.64V4.5a.5.5 0 0 1 .276-.447l8-4a.5.5 0 0 1 .487.022zM6 8.694 1 10.36V15h5V8.694zM7 15h2v-1.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5V15h2V1.709l-7 3.5V15z"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Colliery Units -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="card h-100 border-start border-info border-4 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small fw-semibold text-uppercase">Colliery Units</div>
+                            <div class="h2 fw-bold mb-0 text-dark">@subAreas.Count</div>
+                            <small class="text-muted">
+                                @if (UserSession.IsSuperAdmin)
+                                {
+                                    <span>Across All Areas</span>
+                                }
+                                else if (UserSession.IsAreaAdmin)
+                                {
+                                    <span>In @(UserSession.CurrentUser?.AreaName)</span>
+                                }
+                                else
+                                {
+                                    <span>Assigned Unit</span>
+                                }
+                            </small>
+                        </div>
+                        <div class="stat-icon-box bg-info-subtle text-info">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M8 1a2 2 0 0 1 2 2v2H6V3a2 2 0 0 1 2-2zm3 4V3a3 3 0 1 0-6 0v2H3.5A1.5 1.5 0 0 0 2 6.5v7A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 12.5 5H11zm-7 2h8a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-6a.5.5 0 0 1 .5-.5z"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Status / Accounts -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="card h-100 border-start border-warning border-4 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            @if (UserSession.IsSuperAdmin)
+                            {
+                                <div class="text-muted small fw-semibold text-uppercase">System Officers</div>
+                                <div class="h2 fw-bold mb-0 text-dark">@users.Count</div>
+                                <small class="text-muted">Admins, APMs & UPMs</small>
+                            }
+                            else
+                            {
+                                <div class="text-muted small fw-semibold text-uppercase">Active Miners</div>
+                                <div class="h2 fw-bold mb-0 text-dark">@employees.Count(e => e.IsActive)</div>
+                                <small class="text-muted">Ready for Shift Attendance</small>
+                            }
+                        </div>
+                        <div class="stat-icon-box bg-warning-subtle text-warning">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1 1H7zm4-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-5.784 6A2.238 2.238 0 0 1 5 13c0-1.355.68-2.75 1.936-3.72A6.325 6.325 0 0 0 5 9c-4 0-5 3-5 4s1 1 1 1h4.216zM4.5 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Main Content Grid -->
+    <div class="row g-4">
+        <!-- Left Column: Colliery Units & Workforce -->
+        <div class="col-12 col-lg-8">
+            <div class="card shadow-sm h-100">
+                <div class="card-header d-flex justify-content-between align-items-center py-3">
+                    <span class="fw-bold">
+                        @if (UserSession.IsSuperAdmin)
+                        {
+                            <span>Colliery Units Overview (Across ECL)</span>
+                        }
+                        else if (UserSession.IsAreaAdmin)
+                        {
+                            <span>Colliery Units in @(UserSession.CurrentUser?.AreaName)</span>
+                        }
+                        else
+                        {
+                            <span>Assigned Unit Overview</span>
+                        }
+                    </span>
+                    <a href="subareas" class="btn btn-sm btn-outline-primary">Manage Units</a>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Unit Code</th>
+                                    <th>Colliery Name</th>
+                                    <th>Mining Area</th>
+                                    <th>Devices</th>
+                                    <th>Biometric Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (subAreas.Count == 0)
+                                {
+                                    <tr>
+                                        <td colspan="5" class="text-center py-4 text-muted">
+                                            No colliery units configured under this jurisdiction.
+                                        </td>
+                                    </tr>
+                                }
+                                else
+                                {
+                                    @foreach (var sub in subAreas.Take(6))
+                                    {
+                                        var unitDevicesCount = devices.Count(d => d.SubAreaId == sub.Id);
+                                        <tr>
+                                            <td><span class="badge bg-dark font-monospace">@sub.SubAreaCode</span></td>
+                                            <td class="fw-semibold">@sub.SubAreaName</td>
+                                            <td class="text-muted">@sub.AreaName</td>
+                                            <td>
+                                                <span class="badge bg-light text-dark border">@unitDevicesCount Devices</span>
+                                            </td>
+                                            <td>
+                                                @if (sub.IsSyncedToEbios)
+                                                {
+                                                    <span class="badge bg-success-subtle text-success border border-success-subtle">● Synced</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">● Sync Failed</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Quick Management Shortcuts -->
+        <div class="col-12 col-lg-4">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header py-3">
+                    <span class="fw-bold">Quick Actions</span>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <a href="employees" class="btn btn-primary btn-sm text-start py-2">
+                            👷 <strong>Onboard & View Workers</strong>
+                            <div class="small text-white-50">Manage miners and staff in your jurisdiction</div>
+                        </a>
+                        <a href="subareas" class="btn btn-outline-dark btn-sm text-start py-2">
+                            ⛏️ <strong>Colliery Units & Pits</strong>
+                            <div class="small text-muted">View pits, collieries, and workshops</div>
+                        </a>
+
+                        @if (UserSession.IsSuperAdmin)
+                        {
+                            <a href="devices" class="btn btn-outline-dark btn-sm text-start py-2">
+                                📟 <strong>Configure Biometric Devices</strong>
+                                <div class="small text-muted">Register face readers and turnstiles</div>
+                            </a>
+                            <a href="areas" class="btn btn-outline-dark btn-sm text-start py-2">
+                                🏢 <strong>ECL Mining Areas</strong>
+                                <div class="small text-muted">View all 13 administrative areas</div>
+                            </a>
+                            <a href="users" class="btn btn-outline-dark btn-sm text-start py-2">
+                                👥 <strong>User Accounts & Roles</strong>
+                                <div class="small text-muted">Manage HQ Admin, APM, and UPM logins</div>
+                            </a>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm bg-light">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-2">
+                        <span class="badge bg-success me-2">● Online</span>
+                        <strong class="text-dark small">eBios Attendance System</strong>
+                    </div>
+                    <p class="small text-muted mb-0">
+                        Attendance devices and employee records automatically synchronize to the central biometric attendance server in real-time.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AreaDto> areas = new();
+    private List<SubAreaDto> subAreas = new();
+    private List<DeviceDto> devices = new();
+    private List<EmployeeDto> employees = new();
+    private List<UserDto> users = new();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        UserSession.OnChange += OnSessionChanged;
+        await LoadDashboardDataAsync();
+    }
+
+    private async void OnSessionChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            await LoadDashboardDataAsync();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        UserSession.OnChange -= OnSessionChanged;
+    }
+
+    private async Task LoadDashboardDataAsync()
+    {
+        isLoading = true;
+        try
+        {
+            if (UserSession.IsSuperAdmin)
+            {
+                areas = await AreaService.GetAllAreasAsync();
+                subAreas = await AreaService.GetSubAreasAsync();
+                devices = await DeviceService.GetDevicesAsync();
+                employees = await EmployeeService.GetEmployeesAsync();
+                users = await UserService.GetUsersAsync();
+            }
+            else if (UserSession.IsAreaAdmin)
+            {
+                int? areaId = UserSession.CurrentUser?.AreaId;
+                areas = (await AreaService.GetAllAreasAsync()).Where(a => a.Id == areaId).ToList();
+                subAreas = await AreaService.GetSubAreasAsync(areaId);
+                devices = await DeviceService.GetDevicesAsync(areaId: areaId);
+                employees = await EmployeeService.GetEmployeesAsync(areaId: areaId);
+                users = await UserService.GetUsersAsync(areaId: areaId);
+            }
+            else if (UserSession.IsUnitAdmin)
+            {
+                int? subAreaId = UserSession.CurrentUser?.SubAreaId;
+                subAreas = (await AreaService.GetSubAreasAsync()).Where(s => s.Id == subAreaId).ToList();
+                devices = await DeviceService.GetDevicesAsync(subAreaId: subAreaId);
+                employees = await EmployeeService.GetEmployeesAsync(subAreaId: subAreaId);
+                areas = new();
+                users = new();
+            }
+            else
+            {
+                areas = new();
+                subAreas = new();
+                devices = new();
+                employees = new();
+                users = new();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading dashboard data: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}
