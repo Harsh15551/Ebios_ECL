@@ -525,8 +525,8 @@ else if (activeTab == "roster")
 
     private async Task LoadMetadataAsync()
     {
-        allEmployees = await EmployeeService.GetEmployeesAsync();
-        subAreas = await AreaService.GetSubAreasAsync();
+        allEmployees = await EmployeeService.GetEmployeesAsync(UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
+        subAreas = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
     }
 
     private async Task SwitchToRosterTab()
@@ -540,7 +540,11 @@ else if (activeTab == "roster")
         isRosterLoading = true;
         try
         {
-            rosters = await RosterService.GetRosterAsync(selectedRosterDate, subAreaId: filterSubAreaId > 0 ? filterSubAreaId : null);
+            rosters = await RosterService.GetRosterAsync(
+                selectedRosterDate, 
+                areaId: UserSession.CurrentAreaId, 
+                subAreaId: filterSubAreaId > 0 ? filterSubAreaId : UserSession.CurrentSubAreaId
+            );
         }
         catch (Exception ex)
         {

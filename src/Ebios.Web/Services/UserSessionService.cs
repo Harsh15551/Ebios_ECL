@@ -21,6 +21,22 @@ public class UserSessionService
     public string? CurrentSubAreaName => CurrentUser?.SubAreaName;
     public string CurrentFullName => CurrentUser?.FullName ?? "Guest";
 
+    // Persist Attendance Date Range across navigations and tabs
+    private static DateTime _persistedFromDate = DateTime.Today.AddDays(-7);
+    private static DateTime _persistedToDate = DateTime.Today;
+
+    public DateTime AttendanceFromDate
+    {
+        get => _persistedFromDate;
+        set => _persistedFromDate = value;
+    }
+
+    public DateTime AttendanceToDate
+    {
+        get => _persistedToDate;
+        set => _persistedToDate = value;
+    }
+
     public event Action? OnChange;
 
     public void SetCurrentUser(UserDto? user)

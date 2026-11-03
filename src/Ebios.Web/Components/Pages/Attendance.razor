@@ -10,12 +10,12 @@
 @inject IJSRuntime JS
 @implements IDisposable
 
-<PageTitle>ECL - Attendance & Daily Muster Roll</PageTitle>
+<PageTitle>ECL - Attendance & Daily Master Roll</PageTitle>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
         <div class="d-flex align-items-center gap-2">
-            <h2 class="h3 fw-bold mb-1">Attendance & Daily Muster Roll</h2>
+            <h2 class="h3 fw-bold mb-1">Attendance & Daily Master Roll</h2>
             @if (UserSession.IsSuperAdmin)
             {
                 <span class="badge bg-danger">ECL HQ Global Scope</span>
@@ -30,7 +30,7 @@
             }
         </div>
         <p class="text-muted mb-0">
-            Real-time biometric turnstile punches, shift-window calculations, and daily muster roll reporting.
+            Real-time biometric turnstile punches, shift-window calculations, and daily master roll reporting.
         </p>
     </div>
     <div class="d-flex gap-2">
@@ -92,7 +92,7 @@
 <ul class="nav nav-pills mb-4 border-bottom pb-2">
     <li class="nav-item">
         <button class="nav-link @(activeMainTab == "muster" ? "active" : "")" @onclick="@(() => SwitchTab("muster"))">
-            <i class="bi bi-file-earmark-ruled me-1"></i> 📊 Daily Muster Roll (Official Attendance)
+            <i class="bi bi-file-earmark-ruled me-1"></i> 📊 Daily Master Roll (Official Attendance)
         </button>
     </li>
     <li class="nav-item">
@@ -227,10 +227,10 @@
         </div>
     </div>
 
-    <!-- Muster Roll Table -->
+    <!-- Master Roll Table -->
     <div class="card shadow-sm border-0">
         <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-            <h6 class="mb-0 fw-bold">Official Muster Roll: @musterFromDate.ToString("dd MMM yyyy") to @musterToDate.ToString("dd MMM yyyy")</h6>
+            <h6 class="mb-0 fw-bold">Official Master Roll: @musterFromDate.ToString("dd MMM yyyy") to @musterToDate.ToString("dd MMM yyyy")</h6>
             <span class="badge bg-primary">@(FilteredMusterRoll.Count) Records</span>
         </div>
         <div class="table-responsive">
@@ -256,7 +256,7 @@
                     {
                         <tr>
                             <td colspan="12" class="text-center py-4">
-                                <span class="spinner-border spinner-border-sm me-2"></span> Calculating Daily Muster Roll...
+                                <span class="spinner-border spinner-border-sm me-2"></span> Calculating Daily Master Roll...
                             </td>
                         </tr>
                     }
@@ -265,8 +265,8 @@
                         <tr>
                             <td colspan="12" class="text-center py-5 text-muted">
                                 <i class="bi bi-inbox fs-1 d-block mb-2 text-secondary"></i>
-                                <div>No muster roll records found between @musterFromDate.ToString("dd-MM-yyyy") and @musterToDate.ToString("dd-MM-yyyy").</div>
-                                <small>Click <strong>"Recalculate Day"</strong> above to process existing punches into the muster roll.</small>
+                                <div>No master roll records found between @musterFromDate.ToString("dd-MM-yyyy") and @musterToDate.ToString("dd-MM-yyyy").</div>
+                                <small>Click <strong>"Recalculate Range"</strong> above to process existing punches into the master roll.</small>
                             </td>
                         </tr>
                     }
@@ -724,6 +724,11 @@ else
     protected override async Task OnInitializedAsync()
     {
         UserSession.OnChange += StateHasChanged;
+        musterFromDate = UserSession.AttendanceFromDate;
+        musterToDate = UserSession.AttendanceToDate;
+        filterFromDate = UserSession.AttendanceFromDate;
+        filterToDate = UserSession.AttendanceToDate;
+
         await LoadMetadataAsync();
         await LoadMusterRollAsync();
         await LoadLogsAsync();
@@ -738,6 +743,11 @@ else
     private async Task SwitchTab(string tab)
     {
         activeMainTab = tab;
+        musterFromDate = UserSession.AttendanceFromDate;
+        musterToDate = UserSession.AttendanceToDate;
+        filterFromDate = UserSession.AttendanceFromDate;
+        filterToDate = UserSession.AttendanceToDate;
+
         if (tab == "muster")
         {
             await LoadMusterRollAsync();
@@ -750,6 +760,11 @@ else
 
     private async Task LoadMusterRollAsync()
     {
+        UserSession.AttendanceFromDate = musterFromDate;
+        UserSession.AttendanceToDate = musterToDate;
+        filterFromDate = musterFromDate;
+        filterToDate = musterToDate;
+
         isMusterLoading = true;
         try
         {
@@ -790,7 +805,7 @@ else
         try
         {
             int count = await AttendanceProcessingService.RecalculateDailyMusterRollAsync(musterFromDate, musterToDate, musterSubAreaId > 0 ? musterSubAreaId : null);
-            successMessage = $"Successfully recalculated muster roll for {count} biometric punches between {musterFromDate:dd-MM-yyyy} and {musterToDate:dd-MM-yyyy}.";
+            successMessage = $"Successfully recalculated master roll for {count} biometric punches between {musterFromDate:dd-MM-yyyy} and {musterToDate:dd-MM-yyyy}.";
             await LoadMusterRollAsync();
         }
         catch (Exception ex)
@@ -823,8 +838,8 @@ else
 
             string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
             string fileName = musterFromDate == musterToDate 
-                ? $"ECL_MusterRoll_{musterFromDate:yyyyMMdd}.csv" 
-                : $"ECL_MusterRoll_{musterFromDate:yyyyMMdd}_to_{musterToDate:yyyyMMdd}.csv";
+                ? $"ECL_MasterRoll_{musterFromDate:yyyyMMdd}.csv" 
+                : $"ECL_MasterRoll_{musterFromDate:yyyyMMdd}_to_{musterToDate:yyyyMMdd}.csv";
 
             await JS.InvokeVoidAsync("eval", $@"
                 var link = document.createElement('a');
@@ -835,7 +850,7 @@ else
                 document.body.removeChild(link);
             ");
 
-            successMessage = $"Exported muster roll to {fileName}.";
+            successMessage = $"Exported master roll to {fileName}.";
         }
         catch (Exception ex)
         {
@@ -845,6 +860,11 @@ else
 
     private async Task LoadLogsAsync()
     {
+        if (filterFromDate.HasValue) UserSession.AttendanceFromDate = filterFromDate.Value;
+        if (filterToDate.HasValue) UserSession.AttendanceToDate = filterToDate.Value;
+        musterFromDate = UserSession.AttendanceFromDate;
+        musterToDate = UserSession.AttendanceToDate;
+
         isLoading = true;
         try
         {

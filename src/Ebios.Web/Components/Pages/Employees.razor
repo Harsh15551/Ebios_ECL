@@ -759,7 +759,7 @@ else
         isLoading = true;
         try
         {
-            allSubAreas = await AreaService.GetSubAreasAsync();
+            allSubAreas = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
 
             int? areaIdScope = UserSession.IsAreaAdmin ? UserSession.CurrentUser?.AreaId : null;
             int? subAreaIdScope = UserSession.IsUnitAdmin ? UserSession.CurrentUser?.SubAreaId : null;
