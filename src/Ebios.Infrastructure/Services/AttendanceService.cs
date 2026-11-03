@@ -11,11 +11,13 @@ namespace Ebios.Infrastructure.Services;
 public class AttendanceService : IAttendanceService
 {
     private readonly AppDbContext _context;
+    private readonly IAttendanceProcessingService _processingService;
     private readonly ILogger<AttendanceService> _logger;
 
-    public AttendanceService(AppDbContext context, ILogger<AttendanceService> logger)
+    public AttendanceService(AppDbContext context, IAttendanceProcessingService processingService, ILogger<AttendanceService> logger)
     {
         _context = context;
+        _processingService = processingService;
         _logger = logger;
     }
 
@@ -158,6 +160,7 @@ public class AttendanceService : IAttendanceService
         if (punches == null || !punches.Any()) return 0;
 
         int processed = 0;
+        var addedLogs = new List<AttendanceLog>();
         foreach (var p in punches)
         {
             if (string.IsNullOrWhiteSpace(p.EmployeeCode) || string.IsNullOrWhiteSpace(p.SerialNumber))
@@ -210,11 +213,26 @@ public class AttendanceService : IAttendanceService
             };
 
             _context.AttendanceLogs.Add(log);
+            addedLogs.Add(log);
             processed++;
         }
 
         await _context.SaveChangesAsync();
         _logger.LogInformation("Processed {Count} attendance punches via Webhook.", processed);
+
+        // Process punches into the Daily Muster Roll
+        foreach (var log in addedLogs)
+        {
+            try
+            {
+                await _processingService.ProcessPunchIntoMusterRollAsync(log);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing punch into muster roll for {Code}", log.EmpCode);
+            }
+        }
+
         return processed;
     }
 

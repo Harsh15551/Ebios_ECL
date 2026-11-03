@@ -1,0 +1,521 @@
+@page "/shifts"
+@rendermode InteractiveServer
+@inject IShiftService ShiftService
+@inject IRosterService RosterService
+@inject IEmployeeService EmployeeService
+@inject IAreaService AreaService
+@inject UserSessionService UserSession
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>ECL - Shift Master & Worker Rosters</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h2 class="h3 fw-bold mb-1">Shift Master & Worker Rosters</h2>
+            <span class="badge bg-secondary">ECL Operations</span>
+        </div>
+        <p class="text-muted mb-0">
+            Pre-configured eBioServer master shifts and daily colliery roster schedules.
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        @if (activeTab == "roster")
+        {
+            <button class="btn btn-outline-primary btn-sm" @onclick="OpenBulkUploadModal">
+                <i class="bi bi-file-earmark-spreadsheet me-1"></i> Bulk Excel / CSV Import
+            </button>
+            <button class="btn btn-primary btn-sm" @onclick="OpenAssignModal">
+                <i class="bi bi-calendar-plus me-1"></i> Assign Shift
+            </button>
+        }
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Success:</strong> @successMessage
+        <button type="button" class="btn-close" @onclick="@(() => successMessage = null)"></button>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger alert-dismissible fade show shadow-sm" role="alert">
+        <strong>Error:</strong> @errorMessage
+        <button type="button" class="btn-close" @onclick="@(() => errorMessage = null)"></button>
+    </div>
+}
+
+<!-- Tab Navigation -->
+<ul class="nav nav-pills mb-4 border-bottom pb-2">
+    <li class="nav-item">
+        <button class="nav-link @(activeTab == "master" ? "active" : "")" @onclick="@(() => activeTab = "master")">
+            <i class="bi bi-clock-history me-1"></i> Master Shifts Catalog (@(shifts.Count))
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(activeTab == "roster" ? "active" : "")" @onclick="@(() => SwitchToRosterTab())">
+            <i class="bi bi-calendar-check me-1"></i> Daily Worker Rosters
+        </button>
+    </li>
+</ul>
+
+@if (activeTab == "master")
+{
+    <div class="card shadow-sm border-0">
+        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+            <h6 class="mb-0 fw-bold">ECL Shift Master Catalog (eBioServer Standard)</h6>
+            <span class="badge bg-light text-dark border">30-min Grace Period Permitted</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 140px;">Shift Code</th>
+                        <th>Shift Description</th>
+                        <th style="width: 130px;">Shift Hours</th>
+                        <th style="width: 140px;">IN Window</th>
+                        <th style="width: 140px;">OUT Window</th>
+                        <th style="width: 110px;">Grace Period</th>
+                        <th style="width: 100px;">Duration</th>
+                        <th style="width: 100px;">Type</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (!shifts.Any())
+                    {
+                        <tr>
+                            <td colspan="8" class="text-center py-4 text-muted">
+                                No master shifts found. Please refresh or initialize.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var s in shifts)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="badge bg-dark font-monospace fs-6">@s.ShiftCode</span>
+                                </td>
+                                <td class="fw-semibold">@s.ShiftName</td>
+                                <td>
+                                    <span class="text-primary fw-bold">@FormatTime(s.StartTime) – @FormatTime(s.EndTime)</span>
+                                </td>
+                                <td>
+                                    <small class="text-muted">@FormatTime(s.InWindowStart) – @FormatTime(s.InWindowEnd)</small>
+                                </td>
+                                <td>
+                                    <small class="text-muted">@FormatTime(s.OutWindowStart) – @FormatTime(s.OutWindowEnd)</small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-info text-dark">@s.GraceMinutes mins</span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary">@s.DurationHours hrs</span>
+                                </td>
+                                <td>
+                                    @if (s.IsNightShift)
+                                    {
+                                        <span class="badge bg-warning text-dark">🌙 Night Shift</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-light text-dark border">☀️ Day Shift</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else if (activeTab == "roster")
+{
+    <!-- Roster Date & Filter Bar -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-12 col-md-3">
+                    <label class="form-label small fw-semibold">Roster Date</label>
+                    <input type="date" class="form-control" @bind="selectedRosterDate" @bind:after="LoadRosterAsync" />
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small fw-semibold">Colliery / Sub-Area</label>
+                    <select class="form-select" @bind="filterSubAreaId" @bind:after="LoadRosterAsync">
+                        <option value="0">All Units</option>
+                        @foreach (var sub in subAreas)
+                        {
+                            <option value="@sub.Id">@sub.SubAreaName</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small fw-semibold">Search Worker</label>
+                    <input type="text" class="form-control" placeholder="Search name or ID..." @bind="rosterSearchTerm" @bind:event="oninput" />
+                </div>
+                <div class="col-12 col-md-3 d-flex gap-2">
+                    <button class="btn btn-outline-secondary w-100" @onclick="LoadRosterAsync" disabled="@isRosterLoading">
+                        <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Roster Table -->
+    <div class="card shadow-sm border-0">
+        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+            <h6 class="mb-0 fw-bold">Shift Schedule for @selectedRosterDate.ToString("dd MMMM yyyy")</h6>
+            <span class="badge bg-primary">@(FilteredRoster.Count) Scheduled</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Worker ID</th>
+                        <th>Worker Name</th>
+                        <th>Colliery / Unit</th>
+                        <th>Assigned Shift</th>
+                        <th>Assigned By</th>
+                        <th>Schedule Date</th>
+                        <th class="text-end">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (isRosterLoading)
+                    {
+                        <tr>
+                            <td colspan="7" class="text-center py-4">
+                                <span class="spinner-border spinner-border-sm me-2"></span> Loading shift roster...
+                            </td>
+                        </tr>
+                    }
+                    else if (!FilteredRoster.Any())
+                    {
+                        <tr>
+                            <td colspan="7" class="text-center py-5 text-muted">
+                                <i class="bi bi-calendar-x fs-1 d-block mb-2 text-secondary"></i>
+                                <div>No shift assignments found for this date.</div>
+                                <small>Use <strong>"Assign Shift"</strong> or <strong>"Bulk Excel Import"</strong> to schedule workers.</small>
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var r in FilteredRoster)
+                        {
+                            <tr>
+                                <td class="font-monospace fw-bold">@r.EmpCode</td>
+                                <td class="fw-semibold">@r.EmployeeName</td>
+                                <td>@r.SubAreaName</td>
+                                <td>
+                                    <span class="badge bg-primary font-monospace">@r.ShiftCode</span>
+                                    <span class="small text-muted ms-1">(@r.ShiftName)</span>
+                                </td>
+                                <td>
+                                    <small class="text-muted">@(r.AssignedBy ?? "System")</small>
+                                </td>
+                                <td>@r.RosterDate.ToString("dd-MM-yyyy")</td>
+                                <td class="text-end">
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="@(() => OpenEditAssignModal(r))">
+                                        <i class="bi bi-pencil-square"></i> Change
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Single Assign Modal -->
+@if (showAssignModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Assign Shift to Worker</h5>
+                    <button type="button" class="btn-close" @onclick="@(() => showAssignModal = false)"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Worker <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="assignEmpCode">
+                            <option value="">-- Select Worker --</option>
+                            @foreach (var emp in allEmployees)
+                            {
+                                <option value="@emp.EmpCode">@emp.EmpCode - @emp.FullName</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Roster Date <span class="text-danger">*</span></label>
+                        <input type="date" class="form-control" @bind="assignDate" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Shift <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="assignShiftCode">
+                            <option value="">-- Select Shift --</option>
+                            @foreach (var s in shifts)
+                            {
+                                <option value="@s.ShiftCode">@s.ShiftCode - @s.ShiftName (@FormatTime(s.StartTime) to @FormatTime(s.EndTime))</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="@(() => showAssignModal = false)">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveShiftAssignmentAsync" disabled="@isAssignSaving">
+                        @if (isAssignSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Save Shift</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Bulk Upload Modal -->
+@if (showBulkUploadModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Bulk Roster Import (Excel / CSV)</h5>
+                    <button type="button" class="btn-close" @onclick="@(() => showBulkUploadModal = false)"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">
+                        Paste your roster records below or upload a CSV file with columns: <code>EmpCode,Date,ShiftCode</code>.
+                    </p>
+
+                    <div class="alert alert-info py-2 small mb-3">
+                        <strong>Expected Format:</strong><br />
+                        <code>EmpCode,Date(YYYY-MM-DD),ShiftCode</code><br />
+                        <em>Example:</em><br />
+                        <code>ECL-7001,2026-11-03,Shift I</code><br />
+                        <code>ECL-7002,2026-11-03,Shift II</code><br />
+                        <code>ECL-7003,2026-11-03,Shift III</code>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Paste CSV Data</label>
+                        <textarea class="form-control font-monospace" rows="8" placeholder="ECL-7001,2026-11-03,Shift I&#10;ECL-7002,2026-11-03,Shift II" @bind="bulkCsvText"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="@(() => showBulkUploadModal = false)">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="ProcessBulkRosterUploadAsync" disabled="@isBulkSaving">
+                        @if (isBulkSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Importing...</span>
+                        }
+                        else
+                        {
+                            <span>Import Roster</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string activeTab = "master";
+    private List<ShiftMasterDto> shifts = new();
+    private List<EmployeeShiftRosterDto> rosters = new();
+    private List<EmployeeDto> allEmployees = new();
+    private List<SubAreaDto> subAreas = new();
+
+    private DateTime selectedRosterDate = DateTime.Today;
+    private int filterSubAreaId = 0;
+    private string rosterSearchTerm = string.Empty;
+    private bool isRosterLoading = false;
+
+    // Modals
+    private bool showAssignModal = false;
+    private bool showBulkUploadModal = false;
+    private bool isAssignSaving = false;
+    private bool isBulkSaving = false;
+    private string assignEmpCode = string.Empty;
+    private DateTime assignDate = DateTime.Today;
+    private string assignShiftCode = "Shift I";
+    private string bulkCsvText = string.Empty;
+
+    private string? successMessage;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadShiftsAsync();
+        await LoadMetadataAsync();
+    }
+
+    private async Task LoadShiftsAsync()
+    {
+        shifts = await ShiftService.GetAllShiftsAsync();
+    }
+
+    private async Task LoadMetadataAsync()
+    {
+        allEmployees = await EmployeeService.GetEmployeesAsync();
+        subAreas = await AreaService.GetSubAreasAsync();
+    }
+
+    private async Task SwitchToRosterTab()
+    {
+        activeTab = "roster";
+        await LoadRosterAsync();
+    }
+
+    private async Task LoadRosterAsync()
+    {
+        isRosterLoading = true;
+        try
+        {
+            rosters = await RosterService.GetRosterAsync(selectedRosterDate, subAreaId: filterSubAreaId > 0 ? filterSubAreaId : null);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Failed to load roster: " + ex.Message;
+        }
+        finally
+        {
+            isRosterLoading = false;
+        }
+    }
+
+    private List<EmployeeShiftRosterDto> FilteredRoster => rosters
+        .Where(r => string.IsNullOrWhiteSpace(rosterSearchTerm) ||
+                    r.EmpCode.Contains(rosterSearchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    r.EmployeeName.Contains(rosterSearchTerm, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private void OpenAssignModal()
+    {
+        assignEmpCode = string.Empty;
+        assignDate = selectedRosterDate;
+        assignShiftCode = shifts.FirstOrDefault()?.ShiftCode ?? "Shift I";
+        showAssignModal = true;
+    }
+
+    private void OpenEditAssignModal(EmployeeShiftRosterDto r)
+    {
+        assignEmpCode = r.EmpCode;
+        assignDate = r.RosterDate;
+        assignShiftCode = r.ShiftCode;
+        showAssignModal = true;
+    }
+
+    private async Task SaveShiftAssignmentAsync()
+    {
+        if (string.IsNullOrWhiteSpace(assignEmpCode) || string.IsNullOrWhiteSpace(assignShiftCode))
+        {
+            errorMessage = "Please select both a worker and a shift.";
+            return;
+        }
+
+        isAssignSaving = true;
+        try
+        {
+            var dto = new AssignRosterDto(assignEmpCode, assignDate, assignShiftCode, UserSession.CurrentUser?.Username ?? "Admin");
+            bool ok = await RosterService.AssignShiftAsync(dto);
+            if (ok)
+            {
+                successMessage = $"Successfully assigned {assignShiftCode} to {assignEmpCode}.";
+                showAssignModal = false;
+                await LoadRosterAsync();
+            }
+            else
+            {
+                errorMessage = "Failed to assign shift. Please verify worker and shift exist.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Error: " + ex.Message;
+        }
+        finally
+        {
+            isAssignSaving = false;
+        }
+    }
+
+    private void OpenBulkUploadModal()
+    {
+        bulkCsvText = string.Empty;
+        showBulkUploadModal = true;
+    }
+
+    private async Task ProcessBulkRosterUploadAsync()
+    {
+        if (string.IsNullOrWhiteSpace(bulkCsvText))
+        {
+            errorMessage = "Please enter or paste CSV lines.";
+            return;
+        }
+
+        isBulkSaving = true;
+        try
+        {
+            var lines = bulkCsvText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var list = new List<AssignRosterDto>();
+
+            foreach (var line in lines)
+            {
+                var parts = line.Split(',');
+                if (parts.Length >= 3)
+                {
+                    string code = parts[0].Trim();
+                    if (DateTime.TryParse(parts[1].Trim(), out var parsedDate))
+                    {
+                        string shift = parts[2].Trim();
+                        list.Add(new AssignRosterDto(code, parsedDate, shift, UserSession.CurrentUser?.Username ?? "BulkImport"));
+                    }
+                }
+            }
+
+            if (!list.Any())
+            {
+                errorMessage = "No valid lines parsed. Make sure format is: EmpCode,YYYY-MM-DD,ShiftCode";
+                return;
+            }
+
+            int imported = await RosterService.BulkAssignRosterAsync(list);
+            successMessage = $"Successfully imported {imported} shift assignments!";
+            showBulkUploadModal = false;
+            await LoadRosterAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Import failed: " + ex.Message;
+        }
+        finally
+        {
+            isBulkSaving = false;
+        }
+    }
+
+    private string FormatTime(TimeSpan t) => $"{t.Hours:D2}:{t.Minutes:D2}";
+}

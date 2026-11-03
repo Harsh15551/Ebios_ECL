@@ -29,6 +29,9 @@ builder.Services.AddScoped<IAreaService, AreaService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDeviceService, DeviceService>();
 builder.Services.AddScoped<IEmployeeService, EmployeeService>();
+builder.Services.AddScoped<IShiftService, ShiftService>();
+builder.Services.AddScoped<IRosterService, RosterService>();
+builder.Services.AddScoped<IAttendanceProcessingService, AttendanceProcessingService>();
 builder.Services.AddScoped<IAttendanceService, AttendanceService>();
 builder.Services.AddScoped<Ebios.Web.Services.UserSessionService>();
 

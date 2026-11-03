@@ -1,18 +1,21 @@
 @page "/attendance"
 @rendermode InteractiveServer
 @inject IAttendanceService AttendanceService
+@inject IAttendanceProcessingService AttendanceProcessingService
+@inject IShiftService ShiftService
 @inject IEmployeeService EmployeeService
 @inject IAreaService AreaService
 @inject UserSessionService UserSession
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 @implements IDisposable
 
-<PageTitle>ECL - Attendance Logs & Biometric Punches</PageTitle>
+<PageTitle>ECL - Attendance & Daily Muster Roll</PageTitle>
 
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex justify-content-between align-items-center mb-3">
     <div>
         <div class="d-flex align-items-center gap-2">
-            <h2 class="h3 fw-bold mb-1">Attendance & Biometric Logs</h2>
+            <h2 class="h3 fw-bold mb-1">Attendance & Daily Muster Roll</h2>
             @if (UserSession.IsSuperAdmin)
             {
                 <span class="badge bg-danger">ECL HQ Global Scope</span>
@@ -27,25 +30,45 @@
             }
         </div>
         <p class="text-muted mb-0">
-            Real-time biometric turnstile punches pushed from eBioServer.
+            Real-time biometric turnstile punches, shift-window calculations, and daily muster roll reporting.
         </p>
     </div>
     <div class="d-flex gap-2">
-        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadLogsAsync" disabled="@isLoading">
-            @if (isLoading)
-            {
-                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                <span>Refreshing...</span>
-            }
-            else
-            {
+        @if (activeMainTab == "muster")
+        {
+            <button class="btn btn-outline-success btn-sm" @onclick="ExportMusterRollToCsv" disabled="@isMusterLoading">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                    <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                </svg>
+                <span>Export CSV</span>
+            </button>
+            <button class="btn btn-outline-primary btn-sm" @onclick="RecalculateMusterRollAsync" disabled="@isRecalculating">
+                @if (isRecalculating)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    <span>Recalculating...</span>
+                }
+                else
+                {
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                        <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                    </svg>
+                    <span>Recalculate Day</span>
+                }
+            </button>
+        }
+        else
+        {
+            <button class="btn btn-outline-secondary btn-sm" @onclick="LoadLogsAsync" disabled="@isLoading">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
                     <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
                     <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
                 </svg>
-                <span>Refresh</span>
-            }
-        </button>
+                <span>Refresh Stream</span>
+            </button>
+        }
     </div>
 </div>
 
@@ -65,213 +88,483 @@
     </div>
 }
 
-<!-- KPI Cards -->
-<div class="row g-3 mb-4">
-    <div class="col-12 col-sm-6 col-md-3">
-        <div class="card h-100 border-start border-primary border-4 shadow-sm">
-            <div class="card-body">
-                <div class="text-muted small fw-semibold text-uppercase">Total Punches</div>
-                <div class="h3 fw-bold mb-0 text-dark">@logs.Count</div>
-                <small class="text-muted">In current filter view</small>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-12 col-sm-6 col-md-3">
-        <div class="card h-100 border-start border-success border-4 shadow-sm">
-            <div class="card-body">
-                <div class="text-muted small fw-semibold text-uppercase">Verified Workers</div>
-                <div class="h3 fw-bold mb-0 text-success">@logs.Count(l => l.Status == "Verified")</div>
-                <small class="text-muted">Recognized employees</small>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-12 col-sm-6 col-md-3">
-        <div class="card h-100 border-start border-warning border-4 shadow-sm">
-            <div class="card-body">
-                <div class="text-muted small fw-semibold text-uppercase">Flagged Punches</div>
-                <div class="h3 fw-bold mb-0 text-warning">@flaggedCount</div>
-                <small class="text-muted">Unregistered worker codes</small>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-12 col-sm-6 col-md-3">
-        <div class="card h-100 border-start border-secondary border-4 shadow-sm">
-            <div class="card-body">
-                <div class="text-muted small fw-semibold text-uppercase">Dismissed</div>
-                <div class="h3 fw-bold mb-0 text-secondary">@logs.Count(l => l.Status == "Dismissed")</div>
-                <small class="text-muted">Visitors or test scans</small>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Flagged Alert Banner -->
-@if (flaggedCount > 0)
-{
-    <div class="alert alert-warning shadow-sm d-flex align-items-center justify-content-between mb-4">
-        <div class="d-flex align-items-center">
-            <span class="fs-4 me-3">⚠️</span>
-            <div>
-                <strong class="d-block">Action Required: @flaggedCount Flagged / Unrecognized Punches Detected</strong>
-                <span class="small text-muted">Workers have swiped on colliery turnstiles whose employee records are not yet onboarded. You can onboard them or dismiss invalid scans.</span>
-            </div>
-        </div>
-        <button class="btn btn-warning btn-sm fw-bold px-3" @onclick="@(() => statusFilter = "Flagged")">
-            Review Flagged Punches
+<!-- Main Tab Bar -->
+<ul class="nav nav-pills mb-4 border-bottom pb-2">
+    <li class="nav-item">
+        <button class="nav-link @(activeMainTab == "muster" ? "active" : "")" @onclick="@(() => SwitchTab("muster"))">
+            <i class="bi bi-file-earmark-ruled me-1"></i> 📊 Daily Muster Roll (Official Attendance)
         </button>
-    </div>
-}
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(activeMainTab == "punches" ? "active" : "")" @onclick="@(() => SwitchTab("punches"))">
+            <i class="bi bi-broadcast me-1"></i> ⚡ Raw Biometric Stream (@(logs.Count))
+            @if (flaggedCount > 0)
+            {
+                <span class="badge bg-warning text-dark ms-1">@flaggedCount Flagged</span>
+            }
+        </button>
+    </li>
+</ul>
 
-<!-- Filters Bar -->
-<div class="card shadow-sm mb-4">
-    <div class="card-body">
-        <div class="row g-2 align-items-center">
-            <div class="col-12 col-md-4">
-                <input type="text" class="form-control form-control-sm" placeholder="Search by Worker Code, Name, or Machine..." @bind="searchTerm" @bind:event="oninput" />
+@if (activeMainTab == "muster")
+{
+    <!-- Muster Roll KPIs -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-2">
+            <div class="card h-100 border-start border-primary border-4 shadow-sm">
+                <div class="card-body py-2 px-3">
+                    <div class="text-muted small fw-semibold text-uppercase">Workers Active</div>
+                    <div class="h3 fw-bold mb-0 text-dark">@musterKpis.TotalPunches</div>
+                    <small class="text-muted">On @musterDate.ToString("dd MMM")</small>
+                </div>
             </div>
+        </div>
 
-            <div class="col-6 col-md-3">
-                <select class="form-select form-select-sm" @bind="subAreaFilter">
-                    <option value="0">All Colliery Units</option>
-                    @foreach (var sub in permittedSubAreas)
-                    {
-                        <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode)</option>
-                    }
-                </select>
+        <div class="col-6 col-md-2">
+            <div class="card h-100 border-start border-success border-4 shadow-sm">
+                <div class="card-body py-2 px-3">
+                    <div class="text-muted small fw-semibold text-uppercase">Present (Full)</div>
+                    <div class="h3 fw-bold mb-0 text-success">@musterKpis.PresentCount</div>
+                    <small class="text-muted">&ge; 7.5 hrs</small>
+                </div>
             </div>
+        </div>
 
-            <div class="col-6 col-md-2">
-                <select class="form-select form-select-sm" @bind="statusFilter">
-                    <option value="All">All Statuses</option>
-                    <option value="Verified">Verified Only</option>
-                    <option value="Flagged">Flagged Only</option>
-                    <option value="Dismissed">Dismissed Only</option>
-                </select>
+        <div class="col-6 col-md-2">
+            <div class="card h-100 border-start border-warning border-4 shadow-sm">
+                <div class="card-body py-2 px-3">
+                    <div class="text-muted small fw-semibold text-uppercase">Late Entries</div>
+                    <div class="h3 fw-bold mb-0 text-warning">@musterKpis.LateCount</div>
+                    <small class="text-muted">&gt; 30m Grace</small>
+                </div>
             </div>
+        </div>
 
-            <div class="col-12 col-md-3 d-flex gap-1">
-                <input type="date" class="form-control form-control-sm" @bind="filterFromDate" />
-                <span class="align-self-center text-muted small">to</span>
-                <input type="date" class="form-control form-control-sm" @bind="filterToDate" />
+        <div class="col-6 col-md-2">
+            <div class="card h-100 border-start border-info border-4 shadow-sm">
+                <div class="card-body py-2 px-3">
+                    <div class="text-muted small fw-semibold text-uppercase">Early Left</div>
+                    <div class="h3 fw-bold mb-0 text-info">@musterKpis.EarlyExitCount</div>
+                    <small class="text-muted">Before Shift End</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-6 col-md-2">
+            <div class="card h-100 border-start border-4 shadow-sm" style="border-left-color: #6f42c1 !important;">
+                <div class="card-body py-2 px-3">
+                    <div class="text-muted small fw-semibold text-uppercase">Double Shift / OT</div>
+                    <div class="h3 fw-bold mb-0" style="color: #6f42c1;">@musterKpis.DoubleShiftCount</div>
+                    <small class="text-muted">&ge; 14 hrs or OT</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-6 col-md-2">
+            <div class="card h-100 border-start border-danger border-4 shadow-sm">
+                <div class="card-body py-2 px-3">
+                    <div class="text-muted small fw-semibold text-uppercase">Missed OUT</div>
+                    <div class="h3 fw-bold mb-0 text-danger">@musterKpis.SinglePunchCount</div>
+                    <small class="text-muted">Single punch only</small>
+                </div>
             </div>
         </div>
     </div>
-</div>
 
-<!-- Logs Table -->
-@if (isLoading)
-{
-    <div class="text-center py-5">
-        <div class="spinner-border text-primary" role="status"></div>
-        <p class="mt-2 text-muted">Loading attendance punches...</p>
+    <!-- Muster Roll Filter Bar -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-md-2">
+                    <label class="form-label small fw-semibold">Attendance Date</label>
+                    <input type="date" class="form-control form-control-sm" @bind="musterDate" @bind:after="LoadMusterRollAsync" />
+                </div>
+
+                <div class="col-6 col-md-3">
+                    <label class="form-label small fw-semibold">Colliery / Sub-Area</label>
+                    <select class="form-select form-select-sm" @bind="musterSubAreaId" @bind:after="LoadMusterRollAsync">
+                        <option value="0">All Colliery Units</option>
+                        @foreach (var sub in permittedSubAreas)
+                        {
+                            <option value="@sub.Id">@sub.SubAreaName</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold">Shift</label>
+                    <select class="form-select form-select-sm" @bind="musterShiftCode" @bind:after="LoadMusterRollAsync">
+                        <option value="All">All Shifts</option>
+                        @foreach (var s in masterShifts)
+                        {
+                            <option value="@s.ShiftCode">@s.ShiftCode</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold">Status</label>
+                    <select class="form-select form-select-sm" @bind="musterStatus" @bind:after="LoadMusterRollAsync">
+                        <option value="All">All Statuses</option>
+                        <option value="Present">Present</option>
+                        <option value="Late">Late Entry</option>
+                        <option value="Double Shift">Double Shift / OT</option>
+                        <option value="Half Day">Half Day</option>
+                        <option value="Single Punch">Missed OUT</option>
+                    </select>
+                </div>
+
+                <div class="col-12 col-md-3">
+                    <label class="form-label small fw-semibold">Search Worker or Machine</label>
+                    <input type="text" class="form-control form-control-sm" placeholder="Search ID, Name, Turnstile..." @bind="musterSearchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+        </div>
     </div>
-}
-else
-{
-    <div class="card shadow-sm">
+
+    <!-- Muster Roll Table -->
+    <div class="card shadow-sm border-0">
+        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+            <h6 class="mb-0 fw-bold">Official Muster Roll for @musterDate.ToString("dddd, dd MMMM yyyy")</h6>
+            <span class="badge bg-primary">@(FilteredMusterRoll.Count) Records</span>
+        </div>
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
+            <table class="table table-hover align-middle mb-0 font-monospace small">
                 <thead class="table-light">
                     <tr>
-                        <th style="width: 140px;">Punch Time</th>
-                        <th style="width: 130px;">Worker Code</th>
+                        <th style="width: 110px;">Worker ID</th>
                         <th>Worker Name</th>
-                        <th style="width: 100px;">Direction</th>
-                        <th>Colliery Unit / Area</th>
-                        <th>Terminal / Hardware</th>
-                        <th style="width: 130px;">Verification</th>
-                        <th style="width: 120px;">Status</th>
-                        <th style="width: 150px;" class="text-end">Actions</th>
+                        <th>Colliery / Unit</th>
+                        <th style="width: 120px;">Shift</th>
+                        <th>First IN Punch (Machine)</th>
+                        <th>Last OUT Punch (Machine)</th>
+                        <th style="width: 100px;">Duration</th>
+                        <th style="width: 120px;">Late / Early</th>
+                        <th style="width: 110px;">Overtime</th>
+                        <th style="width: 140px;">Attendance Status</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @if (!FilteredLogs.Any())
+                    @if (isMusterLoading)
                     {
                         <tr>
-                            <td colspan="9" class="text-center py-5 text-muted">
-                                <div>No biometric punches found matching your criteria.</div>
-                                <small>Punches will appear here automatically when biometric machines push via webhook.</small>
+                            <td colspan="10" class="text-center py-4">
+                                <span class="spinner-border spinner-border-sm me-2"></span> Calculating Daily Muster Roll...
+                            </td>
+                        </tr>
+                    }
+                    else if (!FilteredMusterRoll.Any())
+                    {
+                        <tr>
+                            <td colspan="10" class="text-center py-5 text-muted">
+                                <i class="bi bi-inbox fs-1 d-block mb-2 text-secondary"></i>
+                                <div>No muster roll records found for @musterDate.ToString("dd-MM-yyyy").</div>
+                                <small>Punches pushed from turnstiles will automatically appear here.</small>
                             </td>
                         </tr>
                     }
                     else
                     {
-                        @foreach (var log in FilteredLogs)
+                        @foreach (var m in FilteredMusterRoll)
                         {
-                            <tr class="@(log.IsFlagged ? "table-warning bg-opacity-25" : "")">
-                                <td class="font-monospace small">
-                                    <div class="fw-bold text-dark">@log.LogDate.ToString("HH:mm:ss")</div>
-                                    <small class="text-muted">@log.LogDate.ToString("dd MMM yyyy")</small>
-                                </td>
+                            <tr>
+                                <td class="fw-bold text-dark">@m.EmpCode</td>
+                                <td class="fw-semibold font-sans-serif">@(m.EmployeeName ?? "—")</td>
+                                <td>@m.SubAreaName</td>
                                 <td>
-                                    <span class="badge bg-dark font-monospace fs-6">@log.EmpCode</span>
-                                </td>
-                                <td>
-                                    <span class="fw-semibold text-dark">@log.EmployeeName</span>
-                                </td>
-                                <td>
-                                    @if (log.Direction.Equals("IN", StringComparison.OrdinalIgnoreCase))
+                                    <span class="badge bg-dark">@m.ShiftCode</span>
+                                    @if (m.RosterStatus == "Auto-Matched")
                                     {
-                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
-                                            ↓ IN
-                                        </span>
+                                        <span class="badge bg-light text-muted border ms-1" title="Auto-matched by Shift Window">Auto</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (m.FirstInTime.HasValue)
+                                    {
+                                        <div>
+                                            <span class="fw-bold text-success">@m.FirstInTime.Value.ToString("HH:mm:ss")</span>
+                                            <small class="text-muted d-block" title="Machine: @m.InSerialNumber">
+                                                @(m.InDeviceName ?? m.InSerialNumber ?? "Terminal")
+                                            </small>
+                                        </div>
                                     }
                                     else
                                     {
-                                        <span class="badge bg-info-subtle text-info border border-info-subtle">
-                                            ↑ OUT
-                                        </span>
+                                        <span class="text-muted">—</span>
                                     }
                                 </td>
                                 <td>
-                                    <div>@log.SubAreaName</div>
-                                    <small class="text-muted">@log.AreaName</small>
-                                </td>
-                                <td>
-                                    <div class="fw-semibold text-dark">@log.DeviceName</div>
-                                    <small class="font-monospace text-muted">SN: @log.SerialNumber</small>
-                                </td>
-                                <td class="text-muted small">
-                                    @(string.IsNullOrWhiteSpace(log.VerificationType) ? "Biometric" : log.VerificationType)
-                                </td>
-                                <td>
-                                    @if (log.Status == "Verified")
+                                    @if (m.LastOutTime.HasValue)
                                     {
-                                        <span class="badge bg-success-subtle text-success border border-success-subtle">
-                                            ● Verified
-                                        </span>
-                                    }
-                                    else if (log.Status == "Flagged")
-                                    {
-                                        <span class="badge bg-warning-subtle text-warning border border-warning-subtle fw-bold">
-                                            ⚠️ Flagged
-                                        </span>
+                                        <div>
+                                            <span class="fw-bold text-danger">@m.LastOutTime.Value.ToString("HH:mm:ss")</span>
+                                            <small class="text-muted d-block" title="Machine: @m.OutSerialNumber">
+                                                @(m.OutDeviceName ?? m.OutSerialNumber ?? "Terminal")
+                                            </small>
+                                        </div>
                                     }
                                     else
                                     {
-                                        <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">
-                                            Dismissed
-                                        </span>
+                                        <span class="badge bg-warning text-dark">⚠️ No Exit Punch</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (m.TotalWorkMinutes > 0)
+                                    {
+                                        <span class="fw-bold">@m.TotalWorkHours hrs</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (m.LateByMinutes > 0)
+                                    {
+                                        <span class="badge bg-warning text-dark">Late @(m.LateByMinutes)m</span>
+                                    }
+                                    @if (m.EarlyExitMinutes > 0)
+                                    {
+                                        <span class="badge bg-info text-dark ms-1">Early @(m.EarlyExitMinutes)m</span>
+                                    }
+                                    @if (m.LateByMinutes == 0 && m.EarlyExitMinutes == 0 && m.FirstInTime.HasValue && m.LastOutTime.HasValue)
+                                    {
+                                        <span class="badge bg-light text-success border">On-Time</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (m.OvertimeMinutes > 0)
+                                    {
+                                        <span class="badge bg-primary">+@Math.Round(m.OvertimeMinutes / 60.0, 1) hrs</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (m.Status == "Double Shift")
+                                    {
+                                        <span class="badge bg-purple text-white" style="background-color: #6f42c1;">⚡ Double Shift</span>
+                                    }
+                                    else if (m.Status.StartsWith("Present"))
+                                    {
+                                        <span class="badge bg-success">● @m.Status</span>
+                                    }
+                                    else if (m.Status == "Half Day")
+                                    {
+                                        <span class="badge bg-info text-dark">🌗 Half Day</span>
+                                    }
+                                    else if (m.Status.StartsWith("Single Punch"))
+                                    {
+                                        <span class="badge bg-danger">⚠️ Missed OUT</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary">@m.Status</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else
+{
+    <!-- Raw Biometric Stream Tab (Existing UI) -->
+    <!-- KPI Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-sm-6 col-md-3">
+            <div class="card h-100 border-start border-primary border-4 shadow-sm">
+                <div class="card-body">
+                    <div class="text-muted small fw-semibold text-uppercase">Total Punches</div>
+                    <div class="h3 fw-bold mb-0 text-dark">@logs.Count</div>
+                    <small class="text-muted">In current stream view</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-sm-6 col-md-3">
+            <div class="card h-100 border-start border-success border-4 shadow-sm">
+                <div class="card-body">
+                    <div class="text-muted small fw-semibold text-uppercase">Verified Workers</div>
+                    <div class="h3 fw-bold mb-0 text-success">@logs.Count(l => l.Status == "Verified")</div>
+                    <small class="text-muted">Recognized employees</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-sm-6 col-md-3">
+            <div class="card h-100 border-start border-warning border-4 shadow-sm">
+                <div class="card-body">
+                    <div class="text-muted small fw-semibold text-uppercase">Flagged Punches</div>
+                    <div class="h3 fw-bold mb-0 text-warning">@flaggedCount</div>
+                    <small class="text-muted">Unregistered worker codes</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-sm-6 col-md-3">
+            <div class="card h-100 border-start border-secondary border-4 shadow-sm">
+                <div class="card-body">
+                    <div class="text-muted small fw-semibold text-uppercase">Dismissed</div>
+                    <div class="h3 fw-bold mb-0 text-secondary">@logs.Count(l => l.Status == "Dismissed")</div>
+                    <small class="text-muted">Visitors or test scans</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Flagged Alert Banner -->
+    @if (flaggedCount > 0)
+    {
+        <div class="alert alert-warning shadow-sm d-flex align-items-center justify-content-between mb-4">
+            <div class="d-flex align-items-center">
+                <span class="fs-4 me-3">⚠️</span>
+                <div>
+                    <strong class="d-block">Action Required: @flaggedCount Flagged / Unrecognized Punches Detected</strong>
+                    <span class="small text-muted">Workers have swiped on colliery turnstiles whose employee records are not yet onboarded. You can onboard them or dismiss invalid scans.</span>
+                </div>
+            </div>
+            <button class="btn btn-warning btn-sm fw-bold px-3" @onclick="@(() => statusFilter = "Flagged")">
+                Review Flagged Punches
+            </button>
+        </div>
+    }
+
+    <!-- Filters Bar -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="row g-2 align-items-center">
+                <div class="col-12 col-md-4">
+                    <input type="text" class="form-control form-control-sm" placeholder="Search by Worker Code, Name, or Machine..." @bind="searchTerm" @bind:event="oninput" />
+                </div>
+
+                <div class="col-6 col-md-3">
+                    <select class="form-select form-select-sm" @bind="subAreaFilter">
+                        <option value="0">All Colliery Units</option>
+                        @foreach (var sub in permittedSubAreas)
+                        {
+                            <option value="@sub.Id">@sub.SubAreaName</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <select class="form-select form-select-sm" @bind="statusFilter">
+                        <option value="All">All Statuses</option>
+                        <option value="Verified">Verified</option>
+                        <option value="Flagged">Flagged</option>
+                        <option value="Dismissed">Dismissed</option>
+                    </select>
+                </div>
+
+                <div class="col-12 col-md-3 d-flex gap-2">
+                    <button class="btn btn-outline-secondary btn-sm w-100" @onclick="LoadLogsAsync" disabled="@isLoading">
+                        Apply Filter
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Raw Logs Table -->
+    <div class="card shadow-sm border-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 120px;">Worker ID</th>
+                        <th>Worker Name</th>
+                        <th>Colliery / Unit</th>
+                        <th>Punch Time (LogDate)</th>
+                        <th>Device / Machine</th>
+                        <th>Direction</th>
+                        <th>Type</th>
+                        <th style="width: 120px;">Status</th>
+                        <th class="text-end" style="width: 140px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (isLoading)
+                    {
+                        <tr>
+                            <td colspan="9" class="text-center py-4">
+                                <span class="spinner-border spinner-border-sm me-2"></span> Loading biometric logs...
+                            </td>
+                        </tr>
+                    }
+                    else if (!FilteredLogs.Any())
+                    {
+                        <tr>
+                            <td colspan="9" class="text-center py-5 text-muted">
+                                <i class="bi bi-clock-history fs-1 d-block mb-2 text-secondary"></i>
+                                <div>No biometric punches found in this view.</div>
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var l in FilteredLogs)
+                        {
+                            <tr class="@(l.IsFlagged ? "table-warning bg-opacity-25" : "")">
+                                <td class="font-monospace fw-bold">@l.EmpCode</td>
+                                <td>
+                                    <span class="fw-semibold">@(l.EmployeeName ?? "—")</span>
+                                </td>
+                                <td>@l.SubAreaName</td>
+                                <td>
+                                    <span class="fw-bold">@l.LogDate.ToString("dd-MM-yyyy HH:mm:ss")</span>
+                                </td>
+                                <td>
+                                    <div class="fw-semibold">@l.DeviceName</div>
+                                    <small class="text-muted font-monospace">@l.SerialNumber</small>
+                                </td>
+                                <td>
+                                    @if (l.Direction.Equals("IN", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">⬇ IN</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle">⬆ OUT</span>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="badge bg-light text-dark border">@(l.VerificationType ?? "Biometric")</span>
+                                </td>
+                                <td>
+                                    @if (l.Status == "Verified")
+                                    {
+                                        <span class="badge bg-success">● Verified</span>
+                                    }
+                                    else if (l.Status == "Flagged")
+                                    {
+                                        <span class="badge bg-warning text-dark">⚠️ Flagged</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary">Dismissed</span>
                                     }
                                 </td>
                                 <td class="text-end">
-                                    @if (log.IsFlagged)
+                                    @if (l.IsFlagged)
                                     {
-                                        <div class="d-flex justify-content-end gap-1">
-                                            <button class="btn btn-sm btn-primary py-0 px-2" title="Quick Onboard Worker" @onclick="@(() => OpenQuickOnboardModal(log))">
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-primary" title="Onboard Worker" @onclick="@(() => OpenQuickOnboardModal(l))">
                                                 ➕ Onboard
                                             </button>
-                                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" title="Dismiss invalid punch" @onclick="@(() => DismissPunchAsync(log.EmpCode))">
-                                                Dismiss
+                                            <button class="btn btn-outline-secondary" title="Dismiss" @onclick="@(() => DismissPunchAsync(l.EmpCode))">
+                                                ✕
                                             </button>
                                         </div>
                                     }
                                     else
                                     {
-                                        <span class="text-muted small fst-italic">Logged</span>
+                                        <span class="text-muted small">—</span>
                                     }
                                 </td>
                             </tr>
@@ -283,48 +576,48 @@ else
     </div>
 }
 
-<!-- Quick Onboard Modal for Flagged Worker -->
+<!-- Quick Onboard Modal -->
 @if (showOnboardModal)
 {
-    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title fw-bold">➕ Onboard Flagged Worker</h5>
+                    <h5 class="modal-title fw-bold">➕ Onboard Worker (@onboardEmpCode)</h5>
                     <button type="button" class="btn-close" @onclick="CloseOnboardModal"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="alert alert-info py-2 small mb-3">
-                        This worker swiped on turnstiles with Employee Code <strong>@onboardEmpCode</strong>. Registering them here will retroactively link all their past punches!
-                    </div>
+                    <p class="text-muted small">
+                        This badge swiped on the turnstile but is not registered in the ECL directory. Fill the details below to onboard the worker.
+                    </p>
 
                     @if (!string.IsNullOrEmpty(onboardError))
                     {
-                        <div class="alert alert-danger py-2 small">@onboardError</div>
+                        <div class="alert alert-danger py-2 small mb-3">@onboardError</div>
                     }
 
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Employee ID / Worker Code</label>
-                        <input type="text" class="form-control font-monospace" @bind="onboardEmpCode" readonly />
+                        <label class="form-label small fw-semibold">Worker ID / Badge Code</label>
+                        <input type="text" class="form-control font-monospace" value="@onboardEmpCode" disabled />
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Full Legal Name <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" placeholder="e.g. Ramesh Chandra Verma" @bind="onboardFullName" />
+                        <label class="form-label small fw-semibold">Full Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Ramesh Chandra Majhi" @bind="onboardFullName" />
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Designation / Role</label>
-                        <input type="text" class="form-control" placeholder="e.g. General Mazdoor, Incline Loader" @bind="onboardDesignation" />
+                        <label class="form-label small fw-semibold">Designation</label>
+                        <input type="text" class="form-control" placeholder="e.g. Mining Sirdar / Mazdoor" @bind="onboardDesignation" />
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Assigned Colliery Unit <span class="text-danger">*</span></label>
+                        <label class="form-label small fw-semibold">Colliery Unit <span class="text-danger">*</span></label>
                         <select class="form-select" @bind="onboardSubAreaId">
-                            <option value="0">-- Select Primary Colliery Unit --</option>
+                            <option value="0">-- Select Colliery --</option>
                             @foreach (var sub in permittedSubAreas)
                             {
-                                <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
+                                <option value="@sub.Id">@sub.SubAreaName</option>
                             }
                         </select>
                     </div>
@@ -334,12 +627,12 @@ else
                     <button type="button" class="btn btn-primary" @onclick="SaveOnboardedWorkerAsync" disabled="@isOnboarding">
                         @if (isOnboarding)
                         {
-                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                            <span>Onboarding...</span>
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Onboarding & Linking...</span>
                         }
                         else
                         {
-                            <span>Register & Link Punches</span>
+                            <span>Save & Link Punches</span>
                         }
                     </button>
                 </div>
@@ -349,54 +642,161 @@ else
 }
 
 @code {
+    private string activeMainTab = "muster";
+
+    // Raw punches state
     private List<AttendanceLogDto> logs = new();
-    private List<SubAreaDto> permittedSubAreas = new();
-    private bool isLoading = true;
     private int flaggedCount = 0;
-
-    private string? successMessage;
-    private string? errorMessage;
-
-    // Filters
+    private bool isLoading = false;
     private string searchTerm = string.Empty;
     private int subAreaFilter = 0;
     private string statusFilter = "All";
     private DateTime? filterFromDate;
     private DateTime? filterToDate;
 
-    // Modal state for quick onboard
+    // Muster roll state
+    private List<DailyMusterRollDto> musterList = new();
+    private List<ShiftMasterDto> masterShifts = new();
+    private MusterRollKpiDto musterKpis = new(0, 0, 0, 0, 0, 0);
+    private DateTime musterDate = DateTime.Today;
+    private int musterSubAreaId = 0;
+    private string musterShiftCode = "All";
+    private string musterStatus = "All";
+    private string musterSearchTerm = string.Empty;
+    private bool isMusterLoading = false;
+    private bool isRecalculating = false;
+
+    // Metadata
+    private List<SubAreaDto> permittedSubAreas = new();
+
+    // Onboard Modal
     private bool showOnboardModal = false;
     private bool isOnboarding = false;
-    private string? onboardError;
     private string onboardEmpCode = string.Empty;
     private string onboardFullName = string.Empty;
     private string onboardDesignation = "General Mazdoor";
     private int onboardSubAreaId = 0;
+    private string? onboardError;
+
+    private string? successMessage;
+    private string? errorMessage;
 
     protected override async Task OnInitializedAsync()
     {
         UserSession.OnChange += StateHasChanged;
         await LoadMetadataAsync();
+        await LoadMusterRollAsync();
         await LoadLogsAsync();
     }
 
     private async Task LoadMetadataAsync()
     {
+        permittedSubAreas = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
+        masterShifts = await ShiftService.GetAllShiftsAsync();
+    }
+
+    private async Task SwitchTab(string tab)
+    {
+        activeMainTab = tab;
+        if (tab == "muster")
+        {
+            await LoadMusterRollAsync();
+        }
+        else
+        {
+            await LoadLogsAsync();
+        }
+    }
+
+    private async Task LoadMusterRollAsync()
+    {
+        isMusterLoading = true;
         try
         {
-            var allSubAreas = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
-            if (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
-            {
-                permittedSubAreas = allSubAreas.Where(s => s.Id == UserSession.CurrentSubAreaId.Value).ToList();
-            }
-            else
-            {
-                permittedSubAreas = allSubAreas;
-            }
+            var filter = new MusterRollFilterDto(
+                Date: musterDate,
+                AreaId: UserSession.CurrentAreaId,
+                SubAreaId: musterSubAreaId > 0 ? musterSubAreaId : UserSession.CurrentSubAreaId,
+                ShiftCode: musterShiftCode,
+                Status: musterStatus,
+                SearchTerm: musterSearchTerm
+            );
+
+            musterList = await AttendanceProcessingService.GetMusterRollReportAsync(filter, UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
+            musterKpis = await AttendanceProcessingService.GetMusterRollKpisAsync(musterDate, UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
         }
         catch (Exception ex)
         {
-            errorMessage = $"Failed to load filter metadata: {ex.Message}";
+            errorMessage = "Failed to load Daily Muster Roll: " + ex.Message;
+        }
+        finally
+        {
+            isMusterLoading = false;
+        }
+    }
+
+    private List<DailyMusterRollDto> FilteredMusterRoll => musterList
+        .Where(m => string.IsNullOrWhiteSpace(musterSearchTerm) ||
+                    m.EmpCode.Contains(musterSearchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    (m.EmployeeName != null && m.EmployeeName.Contains(musterSearchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                    (m.InDeviceName != null && m.InDeviceName.Contains(musterSearchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                    (m.OutDeviceName != null && m.OutDeviceName.Contains(musterSearchTerm, StringComparison.OrdinalIgnoreCase)))
+        .ToList();
+
+    private async Task RecalculateMusterRollAsync()
+    {
+        isRecalculating = true;
+        try
+        {
+            int count = await AttendanceProcessingService.RecalculateDailyMusterRollAsync(musterDate, musterSubAreaId > 0 ? musterSubAreaId : null);
+            successMessage = $"Successfully recalculated muster roll for {count} biometric punches.";
+            await LoadMusterRollAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Recalculation error: " + ex.Message;
+        }
+        finally
+        {
+            isRecalculating = false;
+        }
+    }
+
+    private async Task ExportMusterRollToCsv()
+    {
+        try
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Date,Worker ID,Worker Name,Colliery Unit,Shift Code,First IN Time,IN Machine,Last OUT Time,OUT Machine,Duration (Hours),Late (Mins),Early (Mins),Overtime (Hours),Status,Remarks");
+
+            foreach (var m in FilteredMusterRoll)
+            {
+                string inTime = m.FirstInTime.HasValue ? m.FirstInTime.Value.ToString("HH:mm:ss") : "";
+                string inMach = (m.InDeviceName ?? m.InSerialNumber ?? "").Replace(",", " ");
+                string outTime = m.LastOutTime.HasValue ? m.LastOutTime.Value.ToString("HH:mm:ss") : "";
+                string outMach = (m.OutDeviceName ?? m.OutSerialNumber ?? "").Replace(",", " ");
+                string remarks = (m.Remarks ?? "").Replace(",", ";");
+
+                sb.AppendLine($"{m.AttendanceDate:yyyy-MM-dd},{m.EmpCode},{m.EmployeeName ?? ""},{m.SubAreaName},{m.ShiftCode},{inTime},{inMach},{outTime},{outMach},{m.TotalWorkHours},{m.LateByMinutes},{m.EarlyExitMinutes},{Math.Round(m.OvertimeMinutes/60.0, 1)},{m.Status},{remarks}");
+            }
+
+            string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
+            string fileName = $"ECL_MusterRoll_{musterDate:yyyyMMdd}.csv";
+
+            await JS.InvokeVoidAsync("eval", $@"
+                var link = document.createElement('a');
+                link.download = '{fileName}';
+                link.href = 'data:text/csv;base64,{base64}';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            ");
+
+            successMessage = $"Exported muster roll to {fileName}.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Export failed: " + ex.Message;
         }
     }
 
@@ -532,4 +932,3 @@ else
         UserSession.OnChange -= StateHasChanged;
     }
 }
-

@@ -15,6 +15,9 @@ public class AppDbContext : DbContext
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<AttendanceLog> AttendanceLogs => Set<AttendanceLog>();
+    public DbSet<ShiftMaster> ShiftMasters => Set<ShiftMaster>();
+    public DbSet<EmployeeShiftRoster> EmployeeShiftRosters => Set<EmployeeShiftRoster>();
+    public DbSet<AttendanceDailySummary> AttendanceDailySummaries => Set<AttendanceDailySummary>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -124,6 +127,64 @@ public class AppDbContext : DbContext
             entity.HasOne(l => l.SubArea)
                   .WithMany()
                   .HasForeignKey(l => l.SubAreaId)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ShiftMaster configuration
+        modelBuilder.Entity<ShiftMaster>(entity =>
+        {
+            entity.HasKey(s => s.Id);
+            entity.HasIndex(s => s.ShiftCode).IsUnique();
+            entity.Property(s => s.ShiftCode).HasMaxLength(50).IsRequired();
+            entity.Property(s => s.ShiftName).HasMaxLength(150).IsRequired();
+        });
+
+        // EmployeeShiftRoster configuration
+        modelBuilder.Entity<EmployeeShiftRoster>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.HasIndex(r => new { r.EmpCode, r.RosterDate }).IsUnique();
+            entity.Property(r => r.EmpCode).HasMaxLength(50).IsRequired();
+            entity.Property(r => r.ShiftCode).HasMaxLength(50).IsRequired();
+
+            entity.HasOne(r => r.Employee)
+                  .WithMany()
+                  .HasForeignKey(r => r.EmployeeId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(r => r.Shift)
+                  .WithMany()
+                  .HasForeignKey(r => r.ShiftId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // AttendanceDailySummary configuration
+        modelBuilder.Entity<AttendanceDailySummary>(entity =>
+        {
+            entity.HasKey(s => s.Id);
+            entity.HasIndex(s => new { s.EmpCode, s.AttendanceDate }).IsUnique();
+            entity.HasIndex(s => s.AttendanceDate);
+            entity.HasIndex(s => s.Status);
+            entity.HasIndex(s => s.SubAreaId);
+
+            entity.Property(s => s.EmpCode).HasMaxLength(50).IsRequired();
+            entity.Property(s => s.ShiftCode).HasMaxLength(50).IsRequired();
+            entity.Property(s => s.Status).HasMaxLength(50).IsRequired();
+            entity.Property(s => s.RosterStatus).HasMaxLength(50).IsRequired();
+
+            entity.HasOne(s => s.Employee)
+                  .WithMany()
+                  .HasForeignKey(s => s.EmployeeId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(s => s.SubArea)
+                  .WithMany()
+                  .HasForeignKey(s => s.SubAreaId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(s => s.Shift)
+                  .WithMany()
+                  .HasForeignKey(s => s.ShiftId)
                   .OnDelete(DeleteBehavior.SetNull);
         });
     }
