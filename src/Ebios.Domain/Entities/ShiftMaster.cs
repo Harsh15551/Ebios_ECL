@@ -24,3 +24,4 @@ public class ShiftMaster
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
+

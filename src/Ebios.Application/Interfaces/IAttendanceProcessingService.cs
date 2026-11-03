@@ -10,3 +10,4 @@ public interface IAttendanceProcessingService
     Task<List<DailyMusterRollDto>> GetMusterRollReportAsync(MusterRollFilterDto filter, int? userAreaId = null, int? userSubAreaId = null);
     Task<MusterRollKpiDto> GetMusterRollKpisAsync(DateTime date, int? userAreaId = null, int? userSubAreaId = null);
 }
+

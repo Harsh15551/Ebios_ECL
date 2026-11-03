@@ -388,3 +388,4 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         return new MusterRollKpiDto(total, present, late, early, doubleShift, singlePunch);
     }
 }
+

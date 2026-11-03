@@ -16,6 +16,35 @@ public record ShiftMasterDto(
     bool IsActive
 );
 
+public record CreateShiftDto(
+    string ShiftCode,
+    string ShiftName,
+    TimeSpan StartTime,
+    TimeSpan EndTime,
+    TimeSpan InWindowStart,
+    TimeSpan InWindowEnd,
+    TimeSpan OutWindowStart,
+    TimeSpan OutWindowEnd,
+    int GraceMinutes = 30,
+    double DurationHours = 8.0,
+    bool IsNightShift = false
+);
+
+public record UpdateShiftDto(
+    string ShiftCode,
+    string ShiftName,
+    TimeSpan StartTime,
+    TimeSpan EndTime,
+    TimeSpan InWindowStart,
+    TimeSpan InWindowEnd,
+    TimeSpan OutWindowStart,
+    TimeSpan OutWindowEnd,
+    int GraceMinutes,
+    double DurationHours,
+    bool IsNightShift,
+    bool IsActive = true
+);
+
 public record EmployeeShiftRosterDto(
     int Id,
     int EmployeeId,
@@ -84,3 +113,4 @@ public record MusterRollKpiDto(
     int DoubleShiftCount,
     int SinglePunchCount
 );
+

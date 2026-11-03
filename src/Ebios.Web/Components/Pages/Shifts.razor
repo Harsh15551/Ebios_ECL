@@ -21,7 +21,13 @@
         </p>
     </div>
     <div class="d-flex gap-2">
-        @if (activeTab == "roster")
+        @if (activeTab == "master")
+        {
+            <button class="btn btn-primary btn-sm" @onclick="OpenCreateShiftModal">
+                <i class="bi bi-plus-circle me-1"></i> Add New Shift
+            </button>
+        }
+        else if (activeTab == "roster")
         {
             <button class="btn btn-outline-primary btn-sm" @onclick="OpenBulkUploadModal">
                 <i class="bi bi-file-earmark-spreadsheet me-1"></i> Bulk Excel / CSV Import
@@ -74,21 +80,22 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
                     <tr>
-                        <th style="width: 140px;">Shift Code</th>
+                        <th style="width: 130px;">Shift Code</th>
                         <th>Shift Description</th>
                         <th style="width: 130px;">Shift Hours</th>
                         <th style="width: 140px;">IN Window</th>
                         <th style="width: 140px;">OUT Window</th>
                         <th style="width: 110px;">Grace Period</th>
-                        <th style="width: 100px;">Duration</th>
-                        <th style="width: 100px;">Type</th>
+                        <th style="width: 90px;">Duration</th>
+                        <th style="width: 110px;">Type</th>
+                        <th class="text-end" style="width: 100px;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     @if (!shifts.Any())
                     {
                         <tr>
-                            <td colspan="8" class="text-center py-4 text-muted">
+                            <td colspan="9" class="text-center py-4 text-muted">
                                 No master shifts found. Please refresh or initialize.
                             </td>
                         </tr>
@@ -100,16 +107,20 @@
                             <tr>
                                 <td>
                                     <span class="badge bg-dark font-monospace fs-6">@s.ShiftCode</span>
+                                    @if (!s.IsActive)
+                                    {
+                                        <span class="badge bg-danger ms-1">Inactive</span>
+                                    }
                                 </td>
                                 <td class="fw-semibold">@s.ShiftName</td>
                                 <td>
                                     <span class="text-primary fw-bold">@FormatTime(s.StartTime) – @FormatTime(s.EndTime)</span>
                                 </td>
                                 <td>
-                                    <small class="text-muted">@FormatTime(s.InWindowStart) – @FormatTime(s.InWindowEnd)</small>
+                                    <small class="text-muted font-monospace">@FormatTime(s.InWindowStart) – @FormatTime(s.InWindowEnd)</small>
                                 </td>
                                 <td>
-                                    <small class="text-muted">@FormatTime(s.OutWindowStart) – @FormatTime(s.OutWindowEnd)</small>
+                                    <small class="text-muted font-monospace">@FormatTime(s.OutWindowStart) – @FormatTime(s.OutWindowEnd)</small>
                                 </td>
                                 <td>
                                     <span class="badge bg-info text-dark">@s.GraceMinutes mins</span>
@@ -126,6 +137,11 @@
                                     {
                                         <span class="badge bg-light text-dark border">☀️ Day Shift</span>
                                     }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-outline-primary btn-sm" @onclick="@(() => OpenEditShiftModal(s))" title="Edit Shift">
+                                        <i class="bi bi-pencil-square"></i> Edit
+                                    </button>
                                 </td>
                             </tr>
                         }
@@ -236,6 +252,119 @@ else if (activeTab == "roster")
     </div>
 }
 
+<!-- Create / Edit Shift Modal -->
+@if (showShiftModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">
+                        @(editingShiftId > 0 ? "Edit Master Shift" : "Create New Master Shift")
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="@(() => showShiftModal = false)"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small fw-semibold">Shift Code <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" placeholder="e.g. Fixed I, Shift V" @bind="shiftFormCode" disabled="@(editingShiftId > 0)" />
+                            <small class="text-muted">Unique shift identifier</small>
+                        </div>
+                        <div class="col-12 col-md-8">
+                            <label class="form-label small fw-semibold">Shift Description / Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" placeholder="e.g. First Rotational Shift" @bind="shiftFormName" />
+                        </div>
+                    </div>
+
+                    <div class="card bg-light border-0 p-3 mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="fw-bold mb-0 text-primary">Shift Hours & Window Configuration</h6>
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AutoCalculateDetectionWindows">
+                                <i class="bi bi-magic me-1"></i> Auto-Calculate Windows
+                            </button>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small fw-semibold">Start Time <span class="text-danger">*</span></label>
+                                <input type="time" class="form-control" @bind="shiftFormStartTime" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small fw-semibold">End Time <span class="text-danger">*</span></label>
+                                <input type="time" class="form-control" @bind="shiftFormEndTime" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small fw-semibold">Duration (Hours)</label>
+                                <input type="number" step="0.5" class="form-control" @bind="shiftFormDuration" />
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small fw-semibold">Grace Period (Mins)</label>
+                                <input type="number" class="form-control" @bind="shiftFormGrace" />
+                            </div>
+                        </div>
+
+                        <hr class="my-3 text-muted" />
+
+                        <div class="row g-3">
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small fw-semibold">IN Window Start</label>
+                                <input type="time" class="form-control" @bind="shiftFormInStart" />
+                                <small class="text-muted">Earliest IN punch</small>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small fw-semibold">IN Window End</label>
+                                <input type="time" class="form-control" @bind="shiftFormInEnd" />
+                                <small class="text-muted">Latest IN punch</small>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small fw-semibold">OUT Window Start</label>
+                                <input type="time" class="form-control" @bind="shiftFormOutStart" />
+                                <small class="text-muted">Earliest OUT punch</small>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label small fw-semibold">OUT Window End</label>
+                                <input type="time" class="form-control" @bind="shiftFormOutEnd" />
+                                <small class="text-muted">Latest OUT punch</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="nightShiftSwitch" @bind="shiftFormIsNight" />
+                            <label class="form-check-label fw-semibold" for="nightShiftSwitch">
+                                🌙 Night Shift (Crosses Midnight)
+                            </label>
+                        </div>
+
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="activeShiftSwitch" @bind="shiftFormIsActive" />
+                            <label class="form-check-label fw-semibold" for="activeShiftSwitch">
+                                Active Shift
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="@(() => showShiftModal = false)">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveShiftAsync" disabled="@isShiftSaving">
+                        @if (isShiftSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Saving Shift...</span>
+                        }
+                        else
+                        {
+                            <span>Save Shift</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 <!-- Single Assign Modal -->
 @if (showAssignModal)
 {
@@ -267,7 +396,7 @@ else if (activeTab == "roster")
                         <label class="form-label small fw-semibold">Shift <span class="text-danger">*</span></label>
                         <select class="form-select" @bind="assignShiftCode">
                             <option value="">-- Select Shift --</option>
-                            @foreach (var s in shifts)
+                            @foreach (var s in shifts.Where(x => x.IsActive))
                             {
                                 <option value="@s.ShiftCode">@s.ShiftCode - @s.ShiftName (@FormatTime(s.StartTime) to @FormatTime(s.EndTime))</option>
                             }
@@ -353,6 +482,23 @@ else if (activeTab == "roster")
     private string rosterSearchTerm = string.Empty;
     private bool isRosterLoading = false;
 
+    // Shift Edit/Create Modal State
+    private bool showShiftModal = false;
+    private bool isShiftSaving = false;
+    private int editingShiftId = 0;
+    private string shiftFormCode = string.Empty;
+    private string shiftFormName = string.Empty;
+    private TimeOnly shiftFormStartTime = new(6, 0);
+    private TimeOnly shiftFormEndTime = new(14, 0);
+    private TimeOnly shiftFormInStart = new(4, 30);
+    private TimeOnly shiftFormInEnd = new(9, 0);
+    private TimeOnly shiftFormOutStart = new(13, 30);
+    private TimeOnly shiftFormOutEnd = new(17, 0);
+    private int shiftFormGrace = 30;
+    private double shiftFormDuration = 8.0;
+    private bool shiftFormIsNight = false;
+    private bool shiftFormIsActive = true;
+
     // Modals
     private bool showAssignModal = false;
     private bool showBulkUploadModal = false;
@@ -412,11 +558,151 @@ else if (activeTab == "roster")
                     r.EmployeeName.Contains(rosterSearchTerm, StringComparison.OrdinalIgnoreCase))
         .ToList();
 
+    private void OpenCreateShiftModal()
+    {
+        editingShiftId = 0;
+        shiftFormCode = string.Empty;
+        shiftFormName = string.Empty;
+        shiftFormStartTime = new TimeOnly(6, 0);
+        shiftFormEndTime = new TimeOnly(14, 0);
+        shiftFormInStart = new TimeOnly(4, 30);
+        shiftFormInEnd = new TimeOnly(9, 0);
+        shiftFormOutStart = new TimeOnly(13, 30);
+        shiftFormOutEnd = new TimeOnly(17, 0);
+        shiftFormGrace = 30;
+        shiftFormDuration = 8.0;
+        shiftFormIsNight = false;
+        shiftFormIsActive = true;
+        showShiftModal = true;
+    }
+
+    private void OpenEditShiftModal(ShiftMasterDto s)
+    {
+        editingShiftId = s.Id;
+        shiftFormCode = s.ShiftCode;
+        shiftFormName = s.ShiftName;
+        shiftFormStartTime = TimeOnly.FromTimeSpan(s.StartTime);
+        shiftFormEndTime = TimeOnly.FromTimeSpan(s.EndTime);
+        shiftFormInStart = TimeOnly.FromTimeSpan(s.InWindowStart);
+        shiftFormInEnd = TimeOnly.FromTimeSpan(s.InWindowEnd);
+        shiftFormOutStart = TimeOnly.FromTimeSpan(s.OutWindowStart);
+        shiftFormOutEnd = TimeOnly.FromTimeSpan(s.OutWindowEnd);
+        shiftFormGrace = s.GraceMinutes;
+        shiftFormDuration = s.DurationHours;
+        shiftFormIsNight = s.IsNightShift;
+        shiftFormIsActive = s.IsActive;
+        showShiftModal = true;
+    }
+
+    private void AutoCalculateDetectionWindows()
+    {
+        // Automatically suggest detection windows based on Start and End time
+        var startTs = shiftFormStartTime.ToTimeSpan();
+        var endTs = shiftFormEndTime.ToTimeSpan();
+
+        // IN Window: 1.5 hrs before start to 3 hrs after start
+        var inStart = startTs.Subtract(TimeSpan.FromHours(1.5));
+        if (inStart < TimeSpan.Zero) inStart = inStart.Add(TimeSpan.FromHours(24));
+        var inEnd = startTs.Add(TimeSpan.FromHours(3));
+
+        // OUT Window: 30m before end to 3 hrs after end
+        var outStart = endTs.Subtract(TimeSpan.FromMinutes(30));
+        if (outStart < TimeSpan.Zero) outStart = outStart.Add(TimeSpan.FromHours(24));
+        var outEnd = endTs.Add(TimeSpan.FromHours(3));
+
+        shiftFormInStart = TimeOnly.FromTimeSpan(inStart);
+        shiftFormInEnd = TimeOnly.FromTimeSpan(inEnd > TimeSpan.FromHours(23.99) ? TimeSpan.FromHours(23.98) : inEnd);
+        shiftFormOutStart = TimeOnly.FromTimeSpan(outStart);
+        shiftFormOutEnd = TimeOnly.FromTimeSpan(outEnd > TimeSpan.FromHours(23.99) ? TimeSpan.FromHours(23.98) : outEnd);
+
+        // Detect if night shift (End < Start)
+        shiftFormIsNight = endTs < startTs;
+    }
+
+    private async Task SaveShiftAsync()
+    {
+        if (string.IsNullOrWhiteSpace(shiftFormCode) || string.IsNullOrWhiteSpace(shiftFormName))
+        {
+            errorMessage = "Please enter both Shift Code and Shift Description.";
+            return;
+        }
+
+        isShiftSaving = true;
+        try
+        {
+            if (editingShiftId > 0)
+            {
+                var updateDto = new UpdateShiftDto(
+                    shiftFormCode,
+                    shiftFormName,
+                    shiftFormStartTime.ToTimeSpan(),
+                    shiftFormEndTime.ToTimeSpan(),
+                    shiftFormInStart.ToTimeSpan(),
+                    shiftFormInEnd.ToTimeSpan(),
+                    shiftFormOutStart.ToTimeSpan(),
+                    shiftFormOutEnd.ToTimeSpan(),
+                    shiftFormGrace,
+                    shiftFormDuration,
+                    shiftFormIsNight,
+                    shiftFormIsActive
+                );
+
+                bool ok = await ShiftService.UpdateShiftAsync(editingShiftId, updateDto);
+                if (ok)
+                {
+                    successMessage = $"Shift '{shiftFormCode}' updated successfully.";
+                    showShiftModal = false;
+                    await LoadShiftsAsync();
+                }
+                else
+                {
+                    errorMessage = "Failed to update shift. Please verify code uniqueness.";
+                }
+            }
+            else
+            {
+                var createDto = new CreateShiftDto(
+                    shiftFormCode,
+                    shiftFormName,
+                    shiftFormStartTime.ToTimeSpan(),
+                    shiftFormEndTime.ToTimeSpan(),
+                    shiftFormInStart.ToTimeSpan(),
+                    shiftFormInEnd.ToTimeSpan(),
+                    shiftFormOutStart.ToTimeSpan(),
+                    shiftFormOutEnd.ToTimeSpan(),
+                    shiftFormGrace,
+                    shiftFormDuration,
+                    shiftFormIsNight
+                );
+
+                bool ok = await ShiftService.CreateShiftAsync(createDto);
+                if (ok)
+                {
+                    successMessage = $"Shift '{shiftFormCode}' created successfully.";
+                    showShiftModal = false;
+                    await LoadShiftsAsync();
+                }
+                else
+                {
+                    errorMessage = "Shift with this code already exists.";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Error saving shift: " + ex.Message;
+        }
+        finally
+        {
+            isShiftSaving = false;
+        }
+    }
+
     private void OpenAssignModal()
     {
         assignEmpCode = string.Empty;
         assignDate = selectedRosterDate;
-        assignShiftCode = shifts.FirstOrDefault()?.ShiftCode ?? "Shift I";
+        assignShiftCode = shifts.FirstOrDefault(x => x.IsActive)?.ShiftCode ?? "Shift I";
         showAssignModal = true;
     }
 

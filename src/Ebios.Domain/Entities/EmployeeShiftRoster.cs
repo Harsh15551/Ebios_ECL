@@ -17,3 +17,4 @@ public class EmployeeShiftRoster
     public string? AssignedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
+

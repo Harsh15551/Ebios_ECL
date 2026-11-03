@@ -9,3 +9,4 @@ public interface IRosterService
     Task<int> BulkAssignRosterAsync(List<AssignRosterDto> dtoList);
     Task<EmployeeShiftRosterDto?> GetEmployeeShiftForDateAsync(string empCode, DateTime date);
 }
+
