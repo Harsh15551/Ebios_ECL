@@ -167,7 +167,7 @@ public class EmployeeService : IEmployeeService
         _context.Employees.Add(employee);
         await _context.SaveChangesAsync();
 
-        // Retroactively link any past flagged punches for this employee code
+        // Retroactively link any past flagged punches and muster roll summaries for this employee code
         try
         {
             var pastFlaggedPunches = await _context.AttendanceLogs
@@ -180,10 +180,27 @@ public class EmployeeService : IEmployeeService
                 p.Status = "Verified";
                 p.IsFlagged = false;
             }
-            if (pastFlaggedPunches.Any())
+
+            var pastSummaries = await _context.AttendanceDailySummaries
+                .Where(s => s.EmpCode.ToUpper() == normalizedCode && (s.EmployeeId == null || s.IsFlagged))
+                .ToListAsync();
+
+            foreach (var s in pastSummaries)
+            {
+                s.EmployeeId = employee.Id;
+                s.EmployeeName = employee.FullName;
+                s.IsFlagged = false;
+                s.IsVerified = true;
+                if (s.Remarks != null && s.Remarks.Contains("Flagged"))
+                {
+                    s.Remarks = s.RosterStatus == "Auto-Matched" ? $"Auto-matched to {s.ShiftCode}" : null;
+                }
+            }
+
+            if (pastFlaggedPunches.Any() || pastSummaries.Any())
             {
                 await _context.SaveChangesAsync();
-                _logger.LogInformation("Retroactively linked {Count} flagged punches to new employee {Code}.", pastFlaggedPunches.Count, employee.EmpCode);
+                _logger.LogInformation("Retroactively linked {PunchCount} flagged punches and {SummaryCount} muster summaries to new employee {Code}.", pastFlaggedPunches.Count, pastSummaries.Count, employee.EmpCode);
             }
         }
         catch (Exception ex)

@@ -21,6 +21,7 @@ appsettings.*.local.json
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+*.log
 _ReSharper*/
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*

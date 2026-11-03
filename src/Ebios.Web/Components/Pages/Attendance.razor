@@ -55,7 +55,7 @@
                         <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
                         <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
                     </svg>
-                    <span>Recalculate Day</span>
+                    <span>Recalculate Range</span>
                 }
             </button>
         }
@@ -115,7 +115,7 @@
                 <div class="card-body py-2 px-3">
                     <div class="text-muted small fw-semibold text-uppercase">Workers Active</div>
                     <div class="h3 fw-bold mb-0 text-dark">@musterKpis.TotalPunches</div>
-                    <small class="text-muted">On @musterDate.ToString("dd MMM")</small>
+                    <small class="text-muted">@(musterFromDate == musterToDate ? musterFromDate.ToString("dd MMM yyyy") : $"{musterFromDate:dd MMM} - {musterToDate:dd MMM}")</small>
                 </div>
             </div>
         </div>
@@ -175,12 +175,17 @@
     <div class="card shadow-sm mb-4">
         <div class="card-body">
             <div class="row g-2 align-items-end">
-                <div class="col-12 col-md-2">
-                    <label class="form-label small fw-semibold">Attendance Date</label>
-                    <input type="date" class="form-control form-control-sm" @bind="musterDate" @bind:after="LoadMusterRollAsync" />
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold">From Date</label>
+                    <input type="date" class="form-control form-control-sm" @bind="musterFromDate" @bind:after="LoadMusterRollAsync" />
                 </div>
 
-                <div class="col-6 col-md-3">
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold">To Date</label>
+                    <input type="date" class="form-control form-control-sm" @bind="musterToDate" @bind:after="LoadMusterRollAsync" />
+                </div>
+
+                <div class="col-6 col-md-2">
                     <label class="form-label small fw-semibold">Colliery / Sub-Area</label>
                     <select class="form-select form-select-sm" @bind="musterSubAreaId" @bind:after="LoadMusterRollAsync">
                         <option value="0">All Colliery Units</option>
@@ -214,9 +219,9 @@
                     </select>
                 </div>
 
-                <div class="col-12 col-md-3">
-                    <label class="form-label small fw-semibold">Search Worker or Machine</label>
-                    <input type="text" class="form-control form-control-sm" placeholder="Search ID, Name, Turnstile..." @bind="musterSearchTerm" @bind:event="oninput" />
+                <div class="col-12 col-md-2">
+                    <label class="form-label small fw-semibold">Search</label>
+                    <input type="text" class="form-control form-control-sm" placeholder="ID, Name, Machine..." @bind="musterSearchTerm" @bind:event="oninput" />
                 </div>
             </div>
         </div>
@@ -225,30 +230,32 @@
     <!-- Muster Roll Table -->
     <div class="card shadow-sm border-0">
         <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-            <h6 class="mb-0 fw-bold">Official Muster Roll for @musterDate.ToString("dddd, dd MMMM yyyy")</h6>
+            <h6 class="mb-0 fw-bold">Official Muster Roll: @musterFromDate.ToString("dd MMM yyyy") to @musterToDate.ToString("dd MMM yyyy")</h6>
             <span class="badge bg-primary">@(FilteredMusterRoll.Count) Records</span>
         </div>
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0 font-monospace small">
                 <thead class="table-light">
                     <tr>
+                        <th style="width: 100px;">Date</th>
                         <th style="width: 110px;">Worker ID</th>
                         <th>Worker Name</th>
                         <th>Colliery / Unit</th>
-                        <th style="width: 120px;">Shift</th>
+                        <th style="width: 110px;">Shift</th>
                         <th>First IN Punch (Machine)</th>
                         <th>Last OUT Punch (Machine)</th>
-                        <th style="width: 100px;">Duration</th>
-                        <th style="width: 120px;">Late / Early</th>
-                        <th style="width: 110px;">Overtime</th>
-                        <th style="width: 140px;">Attendance Status</th>
+                        <th style="width: 90px;">Duration</th>
+                        <th style="width: 110px;">Late / Early</th>
+                        <th style="width: 90px;">Overtime</th>
+                        <th style="width: 130px;">Status</th>
+                        <th class="text-end" style="width: 100px;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     @if (isMusterLoading)
                     {
                         <tr>
-                            <td colspan="10" class="text-center py-4">
+                            <td colspan="12" class="text-center py-4">
                                 <span class="spinner-border spinner-border-sm me-2"></span> Calculating Daily Muster Roll...
                             </td>
                         </tr>
@@ -256,10 +263,10 @@
                     else if (!FilteredMusterRoll.Any())
                     {
                         <tr>
-                            <td colspan="10" class="text-center py-5 text-muted">
+                            <td colspan="12" class="text-center py-5 text-muted">
                                 <i class="bi bi-inbox fs-1 d-block mb-2 text-secondary"></i>
-                                <div>No muster roll records found for @musterDate.ToString("dd-MM-yyyy").</div>
-                                <small>Punches pushed from turnstiles will automatically appear here.</small>
+                                <div>No muster roll records found between @musterFromDate.ToString("dd-MM-yyyy") and @musterToDate.ToString("dd-MM-yyyy").</div>
+                                <small>Click <strong>"Recalculate Day"</strong> above to process existing punches into the muster roll.</small>
                             </td>
                         </tr>
                     }
@@ -267,9 +274,16 @@
                     {
                         @foreach (var m in FilteredMusterRoll)
                         {
-                            <tr>
+                            <tr class="@(m.IsFlagged ? "table-warning bg-opacity-10" : "")">
+                                <td class="fw-bold">@m.AttendanceDate.ToString("dd-MM-yyyy")</td>
                                 <td class="fw-bold text-dark">@m.EmpCode</td>
-                                <td class="fw-semibold font-sans-serif">@(m.EmployeeName ?? "—")</td>
+                                <td class="font-sans-serif">
+                                    <span class="fw-semibold">@(m.EmployeeName ?? "—")</span>
+                                    @if (m.IsFlagged)
+                                    {
+                                        <span class="badge bg-warning text-dark ms-1" title="Unregistered Badge">⚠️ Flagged</span>
+                                    }
+                                </td>
                                 <td>@m.SubAreaName</td>
                                 <td>
                                     <span class="badge bg-dark">@m.ShiftCode</span>
@@ -364,6 +378,18 @@
                                         <span class="badge bg-secondary">@m.Status</span>
                                     }
                                 </td>
+                                <td class="text-end">
+                                    @if (m.IsFlagged)
+                                    {
+                                        <button class="btn btn-warning btn-sm py-0 px-2 fw-semibold" @onclick="@(() => OpenQuickOnboardModalForMuster(m))" title="Onboard Worker">
+                                            ➕ Onboard
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small">—</span>
+                                    }
+                                </td>
                             </tr>
                         }
                     }
@@ -438,13 +464,25 @@ else
     <!-- Filters Bar -->
     <div class="card shadow-sm mb-4">
         <div class="card-body">
-            <div class="row g-2 align-items-center">
-                <div class="col-12 col-md-4">
-                    <input type="text" class="form-control form-control-sm" placeholder="Search by Worker Code, Name, or Machine..." @bind="searchTerm" @bind:event="oninput" />
+            <div class="row g-2 align-items-end">
+                <div class="col-12 col-md-3">
+                    <label class="form-label small fw-semibold mb-1">Search</label>
+                    <input type="text" class="form-control form-control-sm" placeholder="Code, Name, Machine..." @bind="searchTerm" @bind:event="oninput" />
                 </div>
 
-                <div class="col-6 col-md-3">
-                    <select class="form-select form-select-sm" @bind="subAreaFilter">
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold mb-1">From Date</label>
+                    <input type="date" class="form-control form-control-sm" @bind="filterFromDate" @bind:after="LoadLogsAsync" />
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold mb-1">To Date</label>
+                    <input type="date" class="form-control form-control-sm" @bind="filterToDate" @bind:after="LoadLogsAsync" />
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold mb-1">Colliery Unit</label>
+                    <select class="form-select form-select-sm" @bind="subAreaFilter" @bind:after="LoadLogsAsync">
                         <option value="0">All Colliery Units</option>
                         @foreach (var sub in permittedSubAreas)
                         {
@@ -454,7 +492,8 @@ else
                 </div>
 
                 <div class="col-6 col-md-2">
-                    <select class="form-select form-select-sm" @bind="statusFilter">
+                    <label class="form-label small fw-semibold mb-1">Status</label>
+                    <select class="form-select form-select-sm" @bind="statusFilter" @bind:after="LoadLogsAsync">
                         <option value="All">All Statuses</option>
                         <option value="Verified">Verified</option>
                         <option value="Flagged">Flagged</option>
@@ -462,9 +501,9 @@ else
                     </select>
                 </div>
 
-                <div class="col-12 col-md-3 d-flex gap-2">
+                <div class="col-6 col-md-1">
                     <button class="btn btn-outline-secondary btn-sm w-100" @onclick="LoadLogsAsync" disabled="@isLoading">
-                        Apply Filter
+                        Apply
                     </button>
                 </div>
             </div>
@@ -651,14 +690,15 @@ else
     private string searchTerm = string.Empty;
     private int subAreaFilter = 0;
     private string statusFilter = "All";
-    private DateTime? filterFromDate;
-    private DateTime? filterToDate;
+    private DateTime? filterFromDate = DateTime.Today.AddDays(-7);
+    private DateTime? filterToDate = DateTime.Today;
 
     // Muster roll state
     private List<DailyMusterRollDto> musterList = new();
     private List<ShiftMasterDto> masterShifts = new();
     private MusterRollKpiDto musterKpis = new(0, 0, 0, 0, 0, 0);
-    private DateTime musterDate = DateTime.Today;
+    private DateTime musterFromDate = DateTime.Today.AddDays(-7);
+    private DateTime musterToDate = DateTime.Today;
     private int musterSubAreaId = 0;
     private string musterShiftCode = "All";
     private string musterStatus = "All";
@@ -714,7 +754,8 @@ else
         try
         {
             var filter = new MusterRollFilterDto(
-                Date: musterDate,
+                FromDate: musterFromDate,
+                ToDate: musterToDate,
                 AreaId: UserSession.CurrentAreaId,
                 SubAreaId: musterSubAreaId > 0 ? musterSubAreaId : UserSession.CurrentSubAreaId,
                 ShiftCode: musterShiftCode,
@@ -723,7 +764,7 @@ else
             );
 
             musterList = await AttendanceProcessingService.GetMusterRollReportAsync(filter, UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
-            musterKpis = await AttendanceProcessingService.GetMusterRollKpisAsync(musterDate, UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
+            musterKpis = await AttendanceProcessingService.GetMusterRollKpisAsync(musterFromDate, musterToDate, UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
         }
         catch (Exception ex)
         {
@@ -748,8 +789,8 @@ else
         isRecalculating = true;
         try
         {
-            int count = await AttendanceProcessingService.RecalculateDailyMusterRollAsync(musterDate, musterSubAreaId > 0 ? musterSubAreaId : null);
-            successMessage = $"Successfully recalculated muster roll for {count} biometric punches.";
+            int count = await AttendanceProcessingService.RecalculateDailyMusterRollAsync(musterFromDate, musterToDate, musterSubAreaId > 0 ? musterSubAreaId : null);
+            successMessage = $"Successfully recalculated muster roll for {count} biometric punches between {musterFromDate:dd-MM-yyyy} and {musterToDate:dd-MM-yyyy}.";
             await LoadMusterRollAsync();
         }
         catch (Exception ex)
@@ -781,7 +822,9 @@ else
             }
 
             string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
-            string fileName = $"ECL_MusterRoll_{musterDate:yyyyMMdd}.csv";
+            string fileName = musterFromDate == musterToDate 
+                ? $"ECL_MusterRoll_{musterFromDate:yyyyMMdd}.csv" 
+                : $"ECL_MusterRoll_{musterFromDate:yyyyMMdd}_to_{musterToDate:yyyyMMdd}.csv";
 
             await JS.InvokeVoidAsync("eval", $@"
                 var link = document.createElement('a');
@@ -866,6 +909,16 @@ else
         showOnboardModal = true;
     }
 
+    private void OpenQuickOnboardModalForMuster(DailyMusterRollDto m)
+    {
+        onboardEmpCode = m.EmpCode;
+        onboardFullName = !string.IsNullOrWhiteSpace(m.EmployeeName) && !m.EmployeeName.StartsWith("Unregistered") ? m.EmployeeName : string.Empty;
+        onboardDesignation = "General Mazdoor";
+        onboardSubAreaId = m.SubAreaId ?? (permittedSubAreas.FirstOrDefault()?.Id ?? 0);
+        onboardError = null;
+        showOnboardModal = true;
+    }
+
     private void CloseOnboardModal()
     {
         showOnboardModal = false;
@@ -902,6 +955,7 @@ else
             successMessage = $"Worker '{created.FullName}' ({created.EmpCode}) onboarded successfully! Past punches linked.";
             showOnboardModal = false;
             await LoadLogsAsync();
+            await LoadMusterRollAsync();
         }
         catch (Exception ex)
         {
@@ -920,6 +974,7 @@ else
             await AttendanceService.DismissFlaggedPunchesAsync(empCode);
             successMessage = $"Flagged punches for worker code '{empCode}' marked as Dismissed.";
             await LoadLogsAsync();
+            await LoadMusterRollAsync();
         }
         catch (Exception ex)
         {

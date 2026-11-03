@@ -92,17 +92,21 @@ public record DailyMusterRollDto(
     string RosterStatus,
     string? Remarks,
     bool IsVerified,
+    bool IsFlagged,
     DateTime CreatedAt,
     DateTime UpdatedAt
 );
 
 public record MusterRollFilterDto(
     DateTime? Date = null,
+    DateTime? FromDate = null,
+    DateTime? ToDate = null,
     int? AreaId = null,
     int? SubAreaId = null,
     string? ShiftCode = null,
     string? Status = null,
-    string? SearchTerm = null
+    string? SearchTerm = null,
+    bool IncludeFlagged = true
 );
 
 public record MusterRollKpiDto(

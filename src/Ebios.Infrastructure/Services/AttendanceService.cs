@@ -266,8 +266,18 @@ public class AttendanceService : IAttendanceService
             l.IsFlagged = false;
         }
 
+        var summaries = await _context.AttendanceDailySummaries
+            .Where(s => s.EmpCode.ToUpper() == norm && s.IsFlagged)
+            .ToListAsync();
+
+        foreach (var s in summaries)
+        {
+            s.Status = "Dismissed";
+            s.IsFlagged = false;
+        }
+
         await _context.SaveChangesAsync();
-        _logger.LogInformation("Dismissed {Count} flagged punches for worker code {Code}.", logs.Count, empCode);
+        _logger.LogInformation("Dismissed {Count} flagged punches and {SumCount} muster summaries for worker code {Code}.", logs.Count, summaries.Count, empCode);
         return true;
     }
 

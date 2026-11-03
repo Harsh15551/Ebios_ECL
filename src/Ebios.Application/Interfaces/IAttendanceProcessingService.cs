@@ -6,8 +6,8 @@ namespace Ebios.Application.Interfaces;
 public interface IAttendanceProcessingService
 {
     Task ProcessPunchIntoMusterRollAsync(AttendanceLog punch);
-    Task<int> RecalculateDailyMusterRollAsync(DateTime date, int? subAreaId = null);
+    Task<int> RecalculateDailyMusterRollAsync(DateTime fromDate, DateTime toDate, int? subAreaId = null);
     Task<List<DailyMusterRollDto>> GetMusterRollReportAsync(MusterRollFilterDto filter, int? userAreaId = null, int? userSubAreaId = null);
-    Task<MusterRollKpiDto> GetMusterRollKpisAsync(DateTime date, int? userAreaId = null, int? userSubAreaId = null);
+    Task<MusterRollKpiDto> GetMusterRollKpisAsync(DateTime fromDate, DateTime toDate, int? userAreaId = null, int? userSubAreaId = null);
 }
 

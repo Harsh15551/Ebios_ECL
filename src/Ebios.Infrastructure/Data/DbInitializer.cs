@@ -141,6 +141,7 @@ public static class DbInitializer
                 CREATE INDEX IF NOT EXISTS ""IX_AttendanceDailySummaries_AttendanceDate"" ON ""AttendanceDailySummaries""(""AttendanceDate"");
                 CREATE INDEX IF NOT EXISTS ""IX_AttendanceDailySummaries_Status"" ON ""AttendanceDailySummaries""(""Status"");
                 CREATE INDEX IF NOT EXISTS ""IX_AttendanceDailySummaries_SubAreaId"" ON ""AttendanceDailySummaries""(""SubAreaId"");
+                ALTER TABLE ""AttendanceDailySummaries"" ADD COLUMN IF NOT EXISTS ""IsFlagged"" boolean NOT NULL DEFAULT false;
             ");
 
             // Update all user passwords to pass@123 as requested

@@ -63,9 +63,33 @@ public class AttendanceProcessingService : IAttendanceProcessingService
             .Include(s => s.Shift)
             .FirstOrDefaultAsync(s => s.EmpCode.ToUpper() == cleanCode && s.AttendanceDate == punchDate);
 
+        var existingEmp = punch.Employee ?? await _context.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.EmpCode.ToUpper() == cleanCode);
+        bool isEmployeeKnown = existingEmp != null;
+        int? resolvedEmpId = existingEmp?.Id ?? punch.EmployeeId;
+        string empDisplayName = existingEmp?.FullName 
+                             ?? (!string.IsNullOrWhiteSpace(punch.RawEmployeeName) ? punch.RawEmployeeName : $"Unregistered ({cleanCode})");
+
         if (todaySummary != null)
         {
             var shift = todaySummary.Shift ?? shifts.FirstOrDefault(s => s.ShiftCode == todaySummary.ShiftCode);
+
+            // Update employee metadata if newly identified
+            if (isEmployeeKnown && (!todaySummary.IsVerified || todaySummary.EmployeeId == null))
+            {
+                todaySummary.EmployeeId = resolvedEmpId;
+                todaySummary.EmployeeName = empDisplayName;
+                todaySummary.IsVerified = true;
+                todaySummary.IsFlagged = false;
+                if (todaySummary.Remarks != null && todaySummary.Remarks.Contains("Flagged"))
+                {
+                    todaySummary.Remarks = todaySummary.RosterStatus == "Auto-Matched" ? $"Auto-matched to {todaySummary.ShiftCode}" : null;
+                }
+            }
+
+            if (todaySummary.SubAreaId == null && punch.SubAreaId.HasValue)
+            {
+                todaySummary.SubAreaId = punch.SubAreaId.Value;
+            }
 
             // If FirstInTime is set and this punch is later, treat as OUT (or update latest OUT)
             if (todaySummary.FirstInTime.HasValue && punchTime > todaySummary.FirstInTime.Value)
@@ -129,9 +153,9 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         {
             AttendanceDate = punchDate,
             EmpCode = cleanCode,
-            EmployeeName = punch.Employee?.FullName ?? punch.RawEmployeeName,
-            EmployeeId = punch.EmployeeId,
-            SubAreaId = punch.SubAreaId,
+            EmployeeName = empDisplayName,
+            EmployeeId = resolvedEmpId,
+            SubAreaId = punch.SubAreaId ?? existingEmp?.SubAreaId,
             ShiftId = resolvedShift?.Id,
             ShiftCode = resolvedShift?.ShiftCode ?? "General",
             FirstInTime = punchTime,
@@ -139,7 +163,9 @@ public class AttendanceProcessingService : IAttendanceProcessingService
             InDeviceName = punch.DeviceName,
             Status = "Single Punch",
             RosterStatus = rosterStatus,
-            Remarks = rosterStatus == "Auto-Matched" ? $"Auto-matched to {resolvedShift?.ShiftCode}" : null,
+            IsVerified = isEmployeeKnown,
+            IsFlagged = !isEmployeeKnown,
+            Remarks = !isEmployeeKnown ? "Flagged: Unregistered Worker" : (rosterStatus == "Auto-Matched" ? $"Auto-matched to {resolvedShift?.ShiftCode}" : null),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -240,16 +266,32 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         }
     }
 
-    public async Task<int> RecalculateDailyMusterRollAsync(DateTime date, int? subAreaId = null)
+    public async Task<int> RecalculateDailyMusterRollAsync(DateTime fromDate, DateTime toDate, int? subAreaId = null)
     {
-        var targetDate = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
-        var nextDate = targetDate.AddDays(1);
+        var fromUtc = DateTime.SpecifyKind(fromDate.Date, DateTimeKind.Utc);
+        var toUtc = DateTime.SpecifyKind(toDate.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
 
-        // Fetch all raw punches for this day
+        // Remove existing daily summaries for this date range so they are freshly calculated from raw punches
+        var existingSummariesQuery = _context.AttendanceDailySummaries
+            .Where(s => s.AttendanceDate >= fromUtc && s.AttendanceDate <= toUtc);
+
+        if (subAreaId.HasValue && subAreaId.Value > 0)
+        {
+            existingSummariesQuery = existingSummariesQuery.Where(s => s.SubAreaId == subAreaId.Value);
+        }
+
+        var existingSummaries = await existingSummariesQuery.ToListAsync();
+        if (existingSummaries.Any())
+        {
+            _context.AttendanceDailySummaries.RemoveRange(existingSummaries);
+            await _context.SaveChangesAsync();
+        }
+
+        // Fetch all raw punches (both verified and flagged) for this date range
         var query = _context.AttendanceLogs
             .Include(l => l.Employee)
             .Include(l => l.Device)
-            .Where(l => l.LogDate >= targetDate && l.LogDate < nextDate);
+            .Where(l => l.LogDate >= fromUtc && l.LogDate <= toUtc);
 
         if (subAreaId.HasValue && subAreaId.Value > 0)
         {
@@ -270,9 +312,17 @@ public class AttendanceProcessingService : IAttendanceProcessingService
 
     public async Task<List<DailyMusterRollDto>> GetMusterRollReportAsync(MusterRollFilterDto filter, int? userAreaId = null, int? userSubAreaId = null)
     {
-        DateTime targetDate = filter.Date.HasValue 
-            ? DateTime.SpecifyKind(filter.Date.Value.Date, DateTimeKind.Utc) 
-            : DateTime.SpecifyKind(DateTime.UtcNow.Date, DateTimeKind.Utc);
+        DateTime fromUtc = filter.FromDate.HasValue
+            ? DateTime.SpecifyKind(filter.FromDate.Value.Date, DateTimeKind.Utc)
+            : (filter.Date.HasValue 
+                ? DateTime.SpecifyKind(filter.Date.Value.Date, DateTimeKind.Utc) 
+                : DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(-30), DateTimeKind.Utc));
+
+        DateTime toUtc = filter.ToDate.HasValue
+            ? DateTime.SpecifyKind(filter.ToDate.Value.Date, DateTimeKind.Utc)
+            : (filter.Date.HasValue 
+                ? DateTime.SpecifyKind(filter.Date.Value.Date, DateTimeKind.Utc) 
+                : DateTime.SpecifyKind(DateTime.UtcNow.Date, DateTimeKind.Utc));
 
         var query = _context.AttendanceDailySummaries
             .AsNoTracking()
@@ -280,7 +330,7 @@ public class AttendanceProcessingService : IAttendanceProcessingService
             .Include(s => s.SubArea)
             .ThenInclude(sub => sub!.Area)
             .Include(s => s.Shift)
-            .Where(s => s.AttendanceDate == targetDate);
+            .Where(s => s.AttendanceDate >= fromUtc && s.AttendanceDate <= toUtc);
 
         // Role scoping:
         if (userSubAreaId.HasValue && userSubAreaId.Value > 0)
@@ -325,7 +375,8 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         }
 
         return await query
-            .OrderBy(s => s.EmpCode)
+            .OrderByDescending(s => s.AttendanceDate)
+            .ThenBy(s => s.EmpCode)
             .Select(s => new DailyMusterRollDto(
                 s.Id,
                 s.AttendanceDate,
@@ -352,20 +403,22 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 s.RosterStatus,
                 s.Remarks,
                 s.IsVerified,
+                s.IsFlagged,
                 s.CreatedAt,
                 s.UpdatedAt
             ))
             .ToListAsync();
     }
 
-    public async Task<MusterRollKpiDto> GetMusterRollKpisAsync(DateTime date, int? userAreaId = null, int? userSubAreaId = null)
+    public async Task<MusterRollKpiDto> GetMusterRollKpisAsync(DateTime fromDate, DateTime toDate, int? userAreaId = null, int? userSubAreaId = null)
     {
-        DateTime targetDate = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+        DateTime fromUtc = DateTime.SpecifyKind(fromDate.Date, DateTimeKind.Utc);
+        DateTime toUtc = DateTime.SpecifyKind(toDate.Date, DateTimeKind.Utc);
 
         var query = _context.AttendanceDailySummaries
             .AsNoTracking()
             .Include(s => s.SubArea)
-            .Where(s => s.AttendanceDate == targetDate);
+            .Where(s => s.AttendanceDate >= fromUtc && s.AttendanceDate <= toUtc);
 
         if (userSubAreaId.HasValue && userSubAreaId.Value > 0)
         {

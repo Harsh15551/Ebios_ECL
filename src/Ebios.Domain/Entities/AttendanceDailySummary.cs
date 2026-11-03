@@ -46,6 +46,7 @@ public class AttendanceDailySummary
     
     public string? Remarks { get; set; }
     public bool IsVerified { get; set; }
+    public bool IsFlagged { get; set; }
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
