@@ -9,9 +9,13 @@ public static class AesWebhookDecryptor
     public static string Decrypt(string encryptedBase64, string password, ILogger? logger = null)
     {
         if (string.IsNullOrWhiteSpace(encryptedBase64)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            throw new ArgumentException("Decryption key/password cannot be empty.", nameof(password));
+        }
 
         // Ensure key is exactly 32 bytes (256-bit) as per eBioServer doc
-        string paddedKey = (password ?? "essl1234").PadRight(32, '1');
+        string paddedKey = password.PadRight(32, '1');
         if (paddedKey.Length > 32) paddedKey = paddedKey.Substring(0, 32);
         byte[] keyBytes = Encoding.UTF8.GetBytes(paddedKey);
 

@@ -43,9 +43,19 @@ public static class WebhookEndpoints
 
                         if (!string.IsNullOrWhiteSpace(encryptedEnvelope?.Data))
                         {
-                            string encryptionKey = config["EbiosServer:WebhookKey"] ?? "essl1234111111111111111111111111";
-                            jsonToParse = AesWebhookDecryptor.Decrypt(encryptedEnvelope.Data, encryptionKey, logger);
-                            logger.LogInformation("Successfully decrypted webhook payload.");
+                            string encryptionKey = config["EbiosServer:WebhookKey"] 
+                                                ?? config["EBIOS_WEBHOOK_KEY"] 
+                                                ?? string.Empty;
+
+                            if (string.IsNullOrWhiteSpace(encryptionKey))
+                            {
+                                logger.LogError("Webhook received encrypted payload, but EBIOS_WEBHOOK_KEY is not configured in .env or appsettings.");
+                            }
+                            else
+                            {
+                                jsonToParse = AesWebhookDecryptor.Decrypt(encryptedEnvelope.Data, encryptionKey, logger);
+                                logger.LogInformation("Successfully decrypted webhook payload.");
+                            }
                         }
                     }
                     catch (Exception ex)

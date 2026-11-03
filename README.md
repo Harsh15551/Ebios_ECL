@@ -76,3 +76,4 @@ Because eBioServer runs on a remote server/IP, it cannot directly reach `localho
    - Click **Save**.
 4. Punch on any registered SilkBio or Face/Finger turnstile device.
 5. Watch the punch appear instantly in real-time under the **Attendance & Logs** console (`/attendance`).
+
