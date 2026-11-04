@@ -10,12 +10,12 @@
 @inject IJSRuntime JS
 @implements IDisposable
 
-<PageTitle>ECL - Attendance & Daily Master Roll</PageTitle>
+<PageTitle>ECL - Daily Attendance Report</PageTitle>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
         <div class="d-flex align-items-center gap-2">
-            <h2 class="h3 fw-bold mb-1">Attendance & Daily Master Roll</h2>
+            <h2 class="h3 fw-bold mb-1">Daily Attendance Report</h2>
             @if (UserSession.IsSuperAdmin)
             {
                 <span class="badge bg-danger">ECL HQ Global Scope</span>
@@ -30,12 +30,22 @@
             }
         </div>
         <p class="text-muted mb-0">
-            Real-time biometric turnstile punches, shift-window calculations, and daily master roll reporting.
+            Real-time biometric turnstile punches, shift calculations, and official daily attendance reporting.
         </p>
     </div>
     <div class="d-flex gap-2">
         @if (activeMainTab == "muster")
         {
+            @if (UserSession.CanManageShifts || UserSession.CanManageEmployees || UserSession.IsSuperAdmin || UserSession.IsAreaAdmin)
+            {
+                <button class="btn btn-outline-warning btn-sm" @onclick="OpenBulkRegularizeModal">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                        <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/>
+                    </svg>
+                    <span>Bulk Regularize</span>
+                </button>
+            }
             <button class="btn btn-outline-success btn-sm" @onclick="ExportMusterRollToCsv" disabled="@isMusterLoading">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
                     <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
@@ -92,7 +102,7 @@
 <ul class="nav nav-pills mb-4 border-bottom pb-2">
     <li class="nav-item">
         <button class="nav-link @(activeMainTab == "muster" ? "active" : "")" @onclick="@(() => SwitchTab("muster"))">
-            <i class="bi bi-file-earmark-ruled me-1"></i> 📊 Daily Master Roll (Official Attendance)
+            <i class="bi bi-file-earmark-ruled me-1"></i> 📊 Daily Attendance Report
         </button>
     </li>
     <li class="nav-item">
@@ -110,62 +120,62 @@
 {
     <!-- Muster Roll KPIs -->
     <div class="row g-3 mb-4">
-        <div class="col-6 col-md-2">
+        <div class="col-6 col-md-4 col-lg-2">
             <div class="card h-100 border-start border-primary border-4 shadow-sm">
                 <div class="card-body py-2 px-3">
-                    <div class="text-muted small fw-semibold text-uppercase">Workers Active</div>
-                    <div class="h3 fw-bold mb-0 text-dark">@musterKpis.TotalPunches</div>
-                    <small class="text-muted">@(musterFromDate == musterToDate ? musterFromDate.ToString("dd MMM yyyy") : $"{musterFromDate:dd MMM} - {musterToDate:dd MMM}")</small>
+                    <div class="text-muted small fw-semibold text-uppercase text-truncate">Workers Active</div>
+                    <div class="h4 fw-bold mb-0 text-dark">@musterKpis.TotalPunches</div>
+                    <small class="text-muted text-truncate d-block">@(musterFromDate == musterToDate ? musterFromDate.ToString("dd MMM yyyy") : $"{musterFromDate:dd MMM} - {musterToDate:dd MMM}")</small>
                 </div>
             </div>
         </div>
 
-        <div class="col-6 col-md-2">
+        <div class="col-6 col-md-4 col-lg-2">
             <div class="card h-100 border-start border-success border-4 shadow-sm">
                 <div class="card-body py-2 px-3">
-                    <div class="text-muted small fw-semibold text-uppercase">Present (Full)</div>
-                    <div class="h3 fw-bold mb-0 text-success">@musterKpis.PresentCount</div>
-                    <small class="text-muted">&ge; 7.5 hrs</small>
+                    <div class="text-muted small fw-semibold text-uppercase text-truncate">Present (Full)</div>
+                    <div class="h4 fw-bold mb-0 text-success">@musterKpis.PresentCount</div>
+                    <small class="text-muted text-truncate d-block">&ge; 7.5 hrs</small>
                 </div>
             </div>
         </div>
 
-        <div class="col-6 col-md-2">
+        <div class="col-6 col-md-4 col-lg-2">
             <div class="card h-100 border-start border-warning border-4 shadow-sm">
                 <div class="card-body py-2 px-3">
-                    <div class="text-muted small fw-semibold text-uppercase">Late Entries</div>
-                    <div class="h3 fw-bold mb-0 text-warning">@musterKpis.LateCount</div>
-                    <small class="text-muted">&gt; 30m Grace</small>
+                    <div class="text-muted small fw-semibold text-uppercase text-truncate">Late Entries</div>
+                    <div class="h4 fw-bold mb-0 text-warning">@musterKpis.LateCount</div>
+                    <small class="text-muted text-truncate d-block">&gt; 30m Grace</small>
                 </div>
             </div>
         </div>
 
-        <div class="col-6 col-md-2">
+        <div class="col-6 col-md-4 col-lg-2">
             <div class="card h-100 border-start border-info border-4 shadow-sm">
                 <div class="card-body py-2 px-3">
-                    <div class="text-muted small fw-semibold text-uppercase">Early Left</div>
-                    <div class="h3 fw-bold mb-0 text-info">@musterKpis.EarlyExitCount</div>
-                    <small class="text-muted">Before Shift End</small>
+                    <div class="text-muted small fw-semibold text-uppercase text-truncate">Early Left</div>
+                    <div class="h4 fw-bold mb-0 text-info">@musterKpis.EarlyExitCount</div>
+                    <small class="text-muted text-truncate d-block">Before Shift End</small>
                 </div>
             </div>
         </div>
 
-        <div class="col-6 col-md-2">
+        <div class="col-6 col-md-4 col-lg-2">
             <div class="card h-100 border-start border-4 shadow-sm" style="border-left-color: #6f42c1 !important;">
                 <div class="card-body py-2 px-3">
-                    <div class="text-muted small fw-semibold text-uppercase">Double Shift / OT</div>
-                    <div class="h3 fw-bold mb-0" style="color: #6f42c1;">@musterKpis.DoubleShiftCount</div>
-                    <small class="text-muted">&ge; 14 hrs or OT</small>
+                    <div class="text-muted small fw-semibold text-uppercase text-truncate">Double Shift / OT</div>
+                    <div class="h4 fw-bold mb-0" style="color: #6f42c1;">@musterKpis.DoubleShiftCount</div>
+                    <small class="text-muted text-truncate d-block">&ge; 14 hrs or OT</small>
                 </div>
             </div>
         </div>
 
-        <div class="col-6 col-md-2">
+        <div class="col-6 col-md-4 col-lg-2">
             <div class="card h-100 border-start border-danger border-4 shadow-sm">
                 <div class="card-body py-2 px-3">
-                    <div class="text-muted small fw-semibold text-uppercase">Missed OUT</div>
-                    <div class="h3 fw-bold mb-0 text-danger">@musterKpis.SinglePunchCount</div>
-                    <small class="text-muted">Single punch only</small>
+                    <div class="text-muted small fw-semibold text-uppercase text-truncate">Missed OUT</div>
+                    <div class="h4 fw-bold mb-0 text-danger">@musterKpis.SinglePunchCount</div>
+                    <small class="text-muted text-truncate d-block">Single punch only</small>
                 </div>
             </div>
         </div>
@@ -227,46 +237,47 @@
         </div>
     </div>
 
-    <!-- Master Roll Table -->
+    <!-- Attendance Report Table -->
     <div class="card shadow-sm border-0">
         <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-            <h6 class="mb-0 fw-bold">Official Master Roll: @musterFromDate.ToString("dd MMM yyyy") to @musterToDate.ToString("dd MMM yyyy")</h6>
+            <h6 class="mb-0 fw-bold">Official Attendance Report: @musterFromDate.ToString("dd MMM yyyy") to @musterToDate.ToString("dd MMM yyyy")</h6>
             <span class="badge bg-primary">@(FilteredMusterRoll.Count) Records</span>
         </div>
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0 font-monospace small">
+            <table class="table table-hover align-middle mb-0 small">
                 <thead class="table-light">
                     <tr>
-                        <th style="width: 100px;">Date</th>
-                        <th style="width: 110px;">Worker ID</th>
-                        <th>Worker Name</th>
-                        <th>Colliery / Unit</th>
-                        <th style="width: 110px;">Shift</th>
-                        <th>First IN Punch (Machine)</th>
-                        <th>Last OUT Punch (Machine)</th>
-                        <th style="width: 90px;">Duration</th>
-                        <th style="width: 110px;">Late / Early</th>
-                        <th style="width: 90px;">Overtime</th>
-                        <th style="width: 130px;">Status</th>
-                        <th class="text-end" style="width: 100px;">Actions</th>
+                        <th class="text-nowrap" style="width: 95px;">Date</th>
+                        <th class="text-nowrap" style="width: 100px;">Worker ID</th>
+                        <th class="text-nowrap">Worker Name</th>
+                        <th class="text-nowrap">Designation</th>
+                        <th class="text-nowrap">Colliery / Unit</th>
+                        <th class="text-nowrap" style="width: 90px;">Shift</th>
+                        <th class="text-nowrap" style="width: 130px;">First IN</th>
+                        <th class="text-nowrap" style="width: 130px;">Last OUT</th>
+                        <th class="text-nowrap" style="width: 80px;">Duration</th>
+                        <th class="text-nowrap" style="width: 110px;">Late / Early</th>
+                        <th class="text-nowrap" style="width: 80px;">Overtime</th>
+                        <th class="text-nowrap" style="width: 120px;">Status</th>
+                        <th class="text-end text-nowrap" style="width: 90px;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     @if (isMusterLoading)
                     {
                         <tr>
-                            <td colspan="12" class="text-center py-4">
-                                <span class="spinner-border spinner-border-sm me-2"></span> Calculating Daily Master Roll...
+                            <td colspan="13" class="text-center py-4">
+                                <span class="spinner-border spinner-border-sm me-2"></span> Calculating Daily Attendance Report...
                             </td>
                         </tr>
                     }
                     else if (!FilteredMusterRoll.Any())
                     {
                         <tr>
-                            <td colspan="12" class="text-center py-5 text-muted">
+                            <td colspan="13" class="text-center py-5 text-muted">
                                 <i class="bi bi-inbox fs-1 d-block mb-2 text-secondary"></i>
-                                <div>No master roll records found between @musterFromDate.ToString("dd-MM-yyyy") and @musterToDate.ToString("dd-MM-yyyy").</div>
-                                <small>Click <strong>"Recalculate Range"</strong> above to process existing punches into the master roll.</small>
+                                <div>No attendance records found between @musterFromDate.ToString("dd-MM-yyyy") and @musterToDate.ToString("dd-MM-yyyy").</div>
+                                <small>Click <strong>"Recalculate Range"</strong> above to process existing punches into the attendance report.</small>
                             </td>
                         </tr>
                     }
@@ -275,29 +286,42 @@
                         @foreach (var m in FilteredMusterRoll)
                         {
                             <tr class="@(m.IsFlagged ? "table-warning bg-opacity-10" : "")">
-                                <td class="fw-bold">@m.AttendanceDate.ToString("dd-MM-yyyy")</td>
-                                <td class="fw-bold text-dark">@m.EmpCode</td>
-                                <td class="font-sans-serif">
-                                    <span class="fw-semibold">@(m.EmployeeName ?? "—")</span>
+                                <td class="fw-bold text-nowrap">@m.AttendanceDate.ToString("dd-MM-yyyy")</td>
+                                <td class="fw-bold text-dark font-monospace text-nowrap">@m.EmpCode</td>
+                                <td>
+                                    <span class="fw-semibold text-truncate d-inline-block" style="max-width: 160px;" title="@m.EmployeeName">@(m.EmployeeName ?? "—")</span>
+                                    @if (m.IsHigherAuthority)
+                                    {
+                                        <span class="badge ms-1" style="background-color: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; font-size: 0.70rem;" title="Higher Authority / Executive">👔 Higher Authority</span>
+                                    }
+                                    @if (m.IsManuallyCorrected)
+                                    {
+                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle ms-1" title="Regularized by @m.CorrectedBy: @m.CorrectionReason">✏️ Regularized</span>
+                                    }
                                     @if (m.IsFlagged)
                                     {
                                         <span class="badge bg-warning text-dark ms-1" title="Unregistered Badge">⚠️ Flagged</span>
                                     }
                                 </td>
-                                <td>@m.SubAreaName</td>
                                 <td>
-                                    <span class="badge bg-dark">@m.ShiftCode</span>
+                                    <span class="badge bg-light text-dark border">@(m.Designation ?? "Colliery Worker")</span>
+                                </td>
+                                <td>
+                                    <span class="text-truncate d-inline-block" style="max-width: 150px;" title="@m.SubAreaName">@m.SubAreaName</span>
+                                </td>
+                                <td class="text-nowrap">
+                                    <span class="badge bg-dark font-monospace">@m.ShiftCode</span>
                                     @if (m.RosterStatus == "Auto-Matched")
                                     {
                                         <span class="badge bg-light text-muted border ms-1" title="Auto-matched by Shift Window">Auto</span>
                                     }
                                 </td>
-                                <td>
+                                <td class="text-nowrap">
                                     @if (m.FirstInTime.HasValue)
                                     {
                                         <div>
-                                            <span class="fw-bold text-success">@m.FirstInTime.Value.ToString("HH:mm:ss")</span>
-                                            <small class="text-muted d-block" title="Machine: @m.InSerialNumber">
+                                            <span class="fw-bold text-success font-monospace">@m.FirstInTime.Value.ToString("HH:mm:ss")</span>
+                                            <small class="text-muted d-block text-truncate" style="max-width: 130px;" title="Machine: @m.InSerialNumber">
                                                 @(m.InDeviceName ?? m.InSerialNumber ?? "Terminal")
                                             </small>
                                         </div>
@@ -307,57 +331,79 @@
                                         <span class="text-muted">—</span>
                                     }
                                 </td>
-                                <td>
+                                <td class="text-nowrap">
                                     @if (m.LastOutTime.HasValue)
                                     {
                                         <div>
-                                            <span class="fw-bold text-danger">@m.LastOutTime.Value.ToString("HH:mm:ss")</span>
-                                            <small class="text-muted d-block" title="Machine: @m.OutSerialNumber">
+                                            <span class="fw-bold text-danger font-monospace">@m.LastOutTime.Value.ToString("HH:mm:ss")</span>
+                                            <small class="text-muted d-block text-truncate" style="max-width: 130px;" title="Machine: @m.OutSerialNumber">
                                                 @(m.OutDeviceName ?? m.OutSerialNumber ?? "Terminal")
                                             </small>
                                         </div>
                                     }
                                     else
                                     {
-                                        <span class="badge bg-warning text-dark">⚠️ No Exit Punch</span>
+                                        @if (m.IsHigherAuthority)
+                                        {
+                                            <span class="text-muted">—</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-warning text-dark">⚠️ No Exit</span>
+                                        }
                                     }
                                 </td>
-                                <td>
+                                <td class="text-nowrap">
                                     @if (m.TotalWorkMinutes > 0)
                                     {
-                                        <span class="fw-bold">@m.TotalWorkHours hrs</span>
+                                        <span class="fw-bold font-monospace">@m.TotalWorkHours hrs</span>
                                     }
                                     else
                                     {
                                         <span class="text-muted">—</span>
                                     }
                                 </td>
-                                <td>
-                                    @if (m.LateByMinutes > 0)
+                                <td class="text-nowrap">
+                                    @if (m.IsHigherAuthority)
                                     {
-                                        <span class="badge bg-warning text-dark">Late @(m.LateByMinutes)m</span>
+                                        <span class="badge bg-light text-muted border">Exempt</span>
                                     }
-                                    @if (m.EarlyExitMinutes > 0)
+                                    else
                                     {
-                                        <span class="badge bg-info text-dark ms-1">Early @(m.EarlyExitMinutes)m</span>
-                                    }
-                                    @if (m.LateByMinutes == 0 && m.EarlyExitMinutes == 0 && m.FirstInTime.HasValue && m.LastOutTime.HasValue)
-                                    {
-                                        <span class="badge bg-light text-success border">On-Time</span>
+                                        @if (m.EarlyInMinutes > 0)
+                                        {
+                                            <span class="badge bg-info text-dark" title="Punched in before reporting window">Early IN @(m.EarlyInMinutes)m</span>
+                                        }
+                                        @if (m.LateByMinutes > 0)
+                                        {
+                                            <span class="badge bg-warning text-dark ms-1">Late @(m.LateByMinutes)m</span>
+                                        }
+                                        @if (m.EarlyExitMinutes > 0)
+                                        {
+                                            <span class="badge bg-danger text-white ms-1">Early Exit @(m.EarlyExitMinutes)m</span>
+                                        }
+                                        @if (m.LateByMinutes == 0 && m.EarlyInMinutes == 0 && m.EarlyExitMinutes == 0 && m.FirstInTime.HasValue && m.LastOutTime.HasValue)
+                                        {
+                                            <span class="badge bg-light text-success border">On-Time</span>
+                                        }
                                     }
                                 </td>
-                                <td>
-                                    @if (m.OvertimeMinutes > 0)
+                                <td class="text-nowrap">
+                                    @if (!m.IsHigherAuthority && m.OvertimeMinutes > 0)
                                     {
-                                        <span class="badge bg-primary">+@Math.Round(m.OvertimeMinutes / 60.0, 1) hrs</span>
+                                        <span class="badge bg-primary font-monospace">+@Math.Round(m.OvertimeMinutes / 60.0, 1) hrs</span>
                                     }
                                     else
                                     {
                                         <span class="text-muted">—</span>
                                     }
                                 </td>
-                                <td>
-                                    @if (m.Status == "Double Shift")
+                                <td class="text-nowrap">
+                                    @if (m.IsHigherAuthority)
+                                    {
+                                        <span class="badge bg-success">● Present</span>
+                                    }
+                                    else if (m.Status == "Double Shift")
                                     {
                                         <span class="badge bg-purple text-white" style="background-color: #6f42c1;">⚡ Double Shift</span>
                                     }
@@ -378,17 +424,42 @@
                                         <span class="badge bg-secondary">@m.Status</span>
                                     }
                                 </td>
-                                <td class="text-end">
-                                    @if (m.IsFlagged)
-                                    {
-                                        <button class="btn btn-warning btn-sm py-0 px-2 fw-semibold" @onclick="@(() => OpenQuickOnboardModalForMuster(m))" title="Onboard Worker">
-                                            ➕ Onboard
-                                        </button>
-                                    }
-                                    else
-                                    {
-                                        <span class="text-muted small">—</span>
-                                    }
+                                <td class="text-end text-nowrap">
+                                    <div class="d-flex justify-content-end gap-1">
+                                        @if (m.IsFlagged)
+                                        {
+                                            @if (UserSession.CanManageEmployees)
+                                            {
+                                                <button class="btn btn-warning btn-sm py-0 px-2 fw-semibold" @onclick="@(() => OpenQuickOnboardModalForMuster(m))" title="Onboard Worker">
+                                                    ➕ Onboard
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-warning-subtle text-dark border">Unregistered</span>
+                                            }
+                                        }
+
+                                        @if (UserSession.CanManageShifts || UserSession.CanManageEmployees || UserSession.IsSuperAdmin || UserSession.IsAreaAdmin)
+                                        {
+                                            @if (m.IsManuallyCorrected)
+                                            {
+                                                <button class="btn btn-outline-info btn-sm py-0 px-2 fw-semibold" @onclick="@(() => OpenRegularizeModal(m))" title="Edit Manual Correction (Logged by @m.CorrectedBy)">
+                                                    ✏️ Edit
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-outline-secondary btn-sm py-0 px-2" @onclick="@(() => OpenRegularizeModal(m))" title="Manual Punch Regularization">
+                                                    ✏️ Regularize
+                                                </button>
+                                            }
+                                        }
+                                        else if (!m.IsFlagged)
+                                        {
+                                            <span class="text-muted small">—</span>
+                                        }
+                                    </div>
                                 </td>
                             </tr>
                         }
@@ -592,14 +663,21 @@ else
                                 <td class="text-end">
                                     @if (l.IsFlagged)
                                     {
-                                        <div class="btn-group btn-group-sm">
-                                            <button class="btn btn-primary" title="Onboard Worker" @onclick="@(() => OpenQuickOnboardModal(l))">
-                                                ➕ Onboard
-                                            </button>
-                                            <button class="btn btn-outline-secondary" title="Dismiss" @onclick="@(() => DismissPunchAsync(l.EmpCode))">
-                                                ✕
-                                            </button>
-                                        </div>
+                                        @if (UserSession.CanManageEmployees)
+                                        {
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn btn-primary" title="Onboard Worker" @onclick="@(() => OpenQuickOnboardModal(l))">
+                                                    ➕ Onboard
+                                                </button>
+                                                <button class="btn btn-outline-secondary" title="Dismiss" @onclick="@(() => DismissPunchAsync(l.EmpCode))">
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-warning-subtle text-dark border">Flagged Punch</span>
+                                        }
                                     }
                                     else
                                     {
@@ -647,7 +725,7 @@ else
 
                     <div class="mb-3">
                         <label class="form-label small fw-semibold">Designation</label>
-                        <input type="text" class="form-control" placeholder="e.g. Mining Sirdar / Mazdoor" @bind="onboardDesignation" />
+                        <input type="text" class="form-control" placeholder="e.g. Mining Sirdar / Colliery Worker" @bind="onboardDesignation" />
                     </div>
 
                     <div class="mb-3">
@@ -672,6 +750,230 @@ else
                         else
                         {
                             <span>Save & Link Punches</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Manual Punch Regularization (Requirement 16) -->
+@if (isRegularizeModalOpen && selectedMusterRecord != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white py-2">
+                    <h6 class="modal-title fw-bold mb-0">
+                        ✏️ Regularize Punch
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseRegularizeModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(regularizeModalError))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">@regularizeModalError</div>
+                    }
+
+                    <!-- Worker & Day Info Banner -->
+                    <div class="bg-light p-2 rounded mb-3 border small">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="fw-bold text-dark">@(selectedMusterRecord.EmployeeName ?? "Worker") (<span class="font-monospace">@selectedMusterRecord.EmpCode</span>)</span>
+                            <span class="badge bg-secondary font-monospace">@selectedMusterRecord.ShiftCode</span>
+                        </div>
+                        <div class="text-muted d-flex justify-content-between">
+                            <span>Colliery: <strong>@selectedMusterRecord.SubAreaName</strong></span>
+                            <span>Date: <strong>@selectedMusterRecord.AttendanceDate.ToString("dd MMM yyyy")</strong></span>
+                        </div>
+                    </div>
+
+                    <!-- Current Machine State -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold text-secondary">Machine Punches</label>
+                        <div class="row g-2 small">
+                            <div class="col-6">
+                                <div class="border rounded p-2 bg-body-tertiary">
+                                    <div class="text-muted" style="font-size: 0.75rem;">MACHINE IN PUNCH</div>
+                                    <div class="fw-bold font-monospace text-success">
+                                        @(selectedMusterRecord.FirstInTime.HasValue ? selectedMusterRecord.FirstInTime.Value.ToString("HH:mm:ss") : "— None (Missed)")
+                                    </div>
+                                    <small class="text-muted text-truncate d-block" title="@selectedMusterRecord.InDeviceName">
+                                        @(selectedMusterRecord.InDeviceName ?? selectedMusterRecord.InSerialNumber ?? "No Scan")
+                                    </small>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="border rounded p-2 bg-body-tertiary">
+                                    <div class="text-muted" style="font-size: 0.75rem;">MACHINE OUT PUNCH</div>
+                                    <div class="fw-bold font-monospace text-danger">
+                                        @(selectedMusterRecord.LastOutTime.HasValue ? selectedMusterRecord.LastOutTime.Value.ToString("HH:mm:ss") : "— None (Missed)")
+                                    </div>
+                                    <small class="text-muted text-truncate d-block" title="@selectedMusterRecord.OutDeviceName">
+                                        @(selectedMusterRecord.OutDeviceName ?? selectedMusterRecord.OutSerialNumber ?? "No Scan")
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Regularized Punch Inputs -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Entry / IN Time</label>
+                            <input type="time" step="1" class="form-control form-control-sm font-monospace" @bind="regularizeInTime" />
+                            <small class="text-muted" style="font-size: 0.75rem;">Leave blank to keep existing machine IN</small>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Exit / OUT Time</label>
+                            <input type="time" step="1" class="form-control form-control-sm font-monospace" @bind="regularizeOutTime" />
+                            <small class="text-muted" style="font-size: 0.75rem;">Leave blank to keep existing machine OUT</small>
+                        </div>
+                    </div>
+
+                    <!-- Shift Override Selection -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label small fw-semibold mb-0">Assigned Shift</label>
+                            @if (selectedMusterRecord.RosterStatus == "Auto-Matched")
+                            {
+                                <span class="badge bg-light text-muted border" style="font-size: 0.70rem;">Auto-Matched</span>
+                            }
+                            else if (selectedMusterRecord.RosterStatus == "Manual-Overridden")
+                            {
+                                <span class="badge bg-info-subtle text-info border" style="font-size: 0.70rem;">Manual Overridden</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-primary-subtle text-primary border" style="font-size: 0.70rem;">Rostered Shift</span>
+                            }
+                        </div>
+                        <select class="form-select form-select-sm" @bind="regularizeShiftCode">
+                            @foreach (var s in masterShifts)
+                            {
+                                <option value="@s.ShiftCode">@s.ShiftCode — @s.ShiftName (@s.StartTime.ToString(@"hh\:mm") to @s.EndTime.ToString(@"hh\:mm"))</option>
+                            }
+                        </select>
+                    </div>
+
+                    <!-- Reason -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Regularization Reason <span class="text-danger">*</span></label>
+                        <select class="form-select form-select-sm mb-2" @bind="regularizeSelectedReasonPreset">
+                            <option value="Pithead turnstile power failure / Jam">Pithead turnstile power failure / Jam</option>
+                            <option value="Biometric reader / Fingerprint sensor fault">Biometric reader / Fingerprint sensor fault</option>
+                            <option value="Deputed on official duty / ECL HQ movement">Deputed on official duty / ECL HQ movement</option>
+                            <option value="Emergency mine rescue / Drainage deployment">Emergency mine rescue / Drainage deployment</option>
+                            <option value="Shift handover delay approved by Colliery Manager">Shift handover delay approved by Colliery Manager</option>
+                            <option value="Custom">Other Reason (Specify below)...</option>
+                        </select>
+                        @if (regularizeSelectedReasonPreset == "Custom")
+                        {
+                            <input type="text" class="form-control form-control-sm" placeholder="Enter specific reason..." @bind="regularizeCustomReason" />
+                        }
+                    </div>
+
+                    @if (selectedMusterRecord.IsManuallyCorrected)
+                    {
+                        <div class="p-2 bg-info-subtle border border-info rounded small mb-2">
+                            <div>Reason: <em>@(selectedMusterRecord.CorrectionReason ?? "—")</em></div>
+                            <div class="text-muted">By: <strong>@(selectedMusterRecord.CorrectedBy ?? "Admin")</strong> at @(selectedMusterRecord.CorrectedAt?.ToString("dd-MM-yyyy HH:mm") ?? "—")</div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer d-flex justify-content-between py-2">
+                    <div>
+                        @if (selectedMusterRecord.IsManuallyCorrected)
+                        {
+                            <button type="button" class="btn btn-outline-danger btn-sm" @onclick="RevertRegularizationAsync" disabled="@isRegularizing">
+                                ↺ Reset to Machine Punches
+                            </button>
+                        }
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CloseRegularizeModal" disabled="@isRegularizing">Cancel</button>
+                        <button type="button" class="btn btn-primary btn-sm fw-semibold" @onclick="SaveRegularizationAsync" disabled="@isRegularizing">
+                            @if (isRegularizing)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                                <span>Saving...</span>
+                            }
+                            else
+                            {
+                                <span>Save</span>
+                            }
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Bulk Attendance Regularization Upload -->
+@if (isBulkRegularizeModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white py-2">
+                    <h6 class="modal-title fw-bold mb-0">
+                        <i class="bi bi-file-earmark-diff me-2 text-warning"></i>
+                        Bulk Attendance Regularization (Excel / CSV)
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseBulkRegularizeModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(bulkRegularizeModalError))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">@bulkRegularizeModalError</div>
+                    }
+                    @if (!string.IsNullOrEmpty(bulkRegularizeModalSuccess))
+                    {
+                        <div class="alert alert-success py-2 small mb-3">@bulkRegularizeModalSuccess</div>
+                    }
+
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="small fw-semibold text-secondary">Step 1: Choose File OR Paste Data</span>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-success" @onclick="DownloadSampleRegularizationCsvAsync" title="Download sample_bulk_regularization.csv">
+                                📥 Download Sample Template
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="FillSampleRegularizationData" title="Auto-fill sample data">
+                                📋 Fill Sample Data
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- File Picker -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Upload CSV / Excel File</label>
+                        <InputFile OnChange="HandleBulkRegularizeFileSelectedAsync" class="form-control form-control-sm" accept=".csv,.txt" />
+                        <small class="text-muted">Select <code>sample_bulk_regularization.csv</code> from your workspace or any CSV export.</small>
+                    </div>
+
+                    <div class="alert alert-info py-2 small mb-3">
+                        <strong>Expected Format:</strong> <code>EmpCode, Date(YYYY-MM-DD), InTime(HH:mm), OutTime(HH:mm), Reason</code><br />
+                        <span class="text-muted">Tip: Leave InTime or OutTime empty to retain existing turnstile punches (e.g. <code>ECL-7001,2026-11-04,,16:30,Missed OUT punch</code>). Delimiters: comma (<code>,</code>) or tab.</span>
+                    </div>
+
+                    <!-- Direct Textarea -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">CSV / Excel Clipboard Data</label>
+                        <textarea class="form-control font-monospace small" rows="7" placeholder="EmpCode,Date,InTime,OutTime,Reason&#10;ECL-7001,2026-11-04,08:30:00,16:30:00,Pithead turnstile power failure&#10;ECL-7002,2026-11-04,,17:00:00,Missed OUT punch due to rush&#10;ECL-7003,2026-11-04,08:45:00,,Missed IN punch due to sensor fault" @bind="bulkRegularizeCsvText"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer py-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CloseBulkRegularizeModal" disabled="@isBulkRegularizing">Cancel</button>
+                    <button type="button" class="btn btn-primary btn-sm fw-semibold" @onclick="ProcessBulkRegularizationUploadAsync" disabled="@isBulkRegularizing">
+                        @if (isBulkRegularizing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Processing...</span>
+                        }
+                        else
+                        {
+                            <span>Import & Save</span>
                         }
                     </button>
                 </div>
@@ -714,9 +1016,27 @@ else
     private bool isOnboarding = false;
     private string onboardEmpCode = string.Empty;
     private string onboardFullName = string.Empty;
-    private string onboardDesignation = "General Mazdoor";
+    private string onboardDesignation = "Colliery Worker";
     private int onboardSubAreaId = 0;
     private string? onboardError;
+
+    // Regularize Modal State (Requirement 16)
+    private bool isRegularizeModalOpen = false;
+    private bool isRegularizing = false;
+    private DailyMusterRollDto? selectedMusterRecord;
+    private TimeOnly? regularizeInTime;
+    private TimeOnly? regularizeOutTime;
+    private string regularizeShiftCode = string.Empty;
+    private string regularizeSelectedReasonPreset = "Pithead turnstile power failure / Jam";
+    private string regularizeCustomReason = string.Empty;
+    private string? regularizeModalError;
+
+    // Bulk Regularize State
+    private bool isBulkRegularizeModalOpen = false;
+    private bool isBulkRegularizing = false;
+    private string bulkRegularizeCsvText = string.Empty;
+    private string? bulkRegularizeModalError;
+    private string? bulkRegularizeModalSuccess;
 
     private string? successMessage;
     private string? errorMessage;
@@ -805,7 +1125,7 @@ else
         try
         {
             int count = await AttendanceProcessingService.RecalculateDailyMusterRollAsync(musterFromDate, musterToDate, musterSubAreaId > 0 ? musterSubAreaId : null);
-            successMessage = $"Successfully recalculated master roll for {count} biometric punches between {musterFromDate:dd-MM-yyyy} and {musterToDate:dd-MM-yyyy}.";
+            successMessage = $"Successfully recalculated attendance report for {count} biometric punches between {musterFromDate:dd-MM-yyyy} and {musterToDate:dd-MM-yyyy}.";
             await LoadMusterRollAsync();
         }
         catch (Exception ex)
@@ -823,7 +1143,7 @@ else
         try
         {
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine("Date,Worker ID,Worker Name,Colliery Unit,Shift Code,First IN Time,IN Machine,Last OUT Time,OUT Machine,Duration (Hours),Late (Mins),Early (Mins),Overtime (Hours),Status,Remarks");
+            sb.AppendLine("Date,Worker ID,Worker Name,Designation,Authority Status,Colliery Unit,Shift Code,First IN Time,IN Machine,Last OUT Time,OUT Machine,Duration (Hours),Early IN (Mins),Late (Mins),Early Exit (Mins),Overtime (Hours),Status,Regularized,Corrected By,Correction Reason,Remarks");
 
             foreach (var m in FilteredMusterRoll)
             {
@@ -832,14 +1152,19 @@ else
                 string outTime = m.LastOutTime.HasValue ? m.LastOutTime.Value.ToString("HH:mm:ss") : "";
                 string outMach = (m.OutDeviceName ?? m.OutSerialNumber ?? "").Replace(",", " ");
                 string remarks = (m.Remarks ?? "").Replace(",", ";");
+                string desig = (m.Designation ?? "Colliery Worker").Replace(",", " ");
+                string authStatus = m.IsHigherAuthority ? "Higher Authority" : "General Personnel";
+                string regStatus = m.IsManuallyCorrected ? "Yes (Manual)" : "No (Turnstile)";
+                string corrBy = (m.CorrectedBy ?? "").Replace(",", " ");
+                string corrReason = (m.CorrectionReason ?? "").Replace(",", ";");
 
-                sb.AppendLine($"{m.AttendanceDate:yyyy-MM-dd},{m.EmpCode},{m.EmployeeName ?? ""},{m.SubAreaName},{m.ShiftCode},{inTime},{inMach},{outTime},{outMach},{m.TotalWorkHours},{m.LateByMinutes},{m.EarlyExitMinutes},{Math.Round(m.OvertimeMinutes/60.0, 1)},{m.Status},{remarks}");
+                sb.AppendLine($"{m.AttendanceDate:yyyy-MM-dd},{m.EmpCode},{m.EmployeeName ?? ""},{desig},{authStatus},{m.SubAreaName},{m.ShiftCode},{inTime},{inMach},{outTime},{outMach},{m.TotalWorkHours},{m.EarlyInMinutes},{m.LateByMinutes},{m.EarlyExitMinutes},{Math.Round(m.OvertimeMinutes/60.0, 1)},{m.Status},{regStatus},{corrBy},{corrReason},{remarks}");
             }
 
             string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
             string fileName = musterFromDate == musterToDate 
-                ? $"ECL_MasterRoll_{musterFromDate:yyyyMMdd}.csv" 
-                : $"ECL_MasterRoll_{musterFromDate:yyyyMMdd}_to_{musterToDate:yyyyMMdd}.csv";
+                ? $"ECL_AttendanceReport_{musterFromDate:yyyyMMdd}.csv" 
+                : $"ECL_AttendanceReport_{musterFromDate:yyyyMMdd}_to_{musterToDate:yyyyMMdd}.csv";
 
             await JS.InvokeVoidAsync("eval", $@"
                 var link = document.createElement('a');
@@ -850,7 +1175,7 @@ else
                 document.body.removeChild(link);
             ");
 
-            successMessage = $"Exported master roll to {fileName}.";
+            successMessage = $"Exported attendance report to {fileName}.";
         }
         catch (Exception ex)
         {
@@ -923,7 +1248,7 @@ else
     {
         onboardEmpCode = log.EmpCode;
         onboardFullName = string.Empty;
-        onboardDesignation = "General Mazdoor";
+        onboardDesignation = "Colliery Worker";
         onboardSubAreaId = log.SubAreaId ?? (permittedSubAreas.FirstOrDefault()?.Id ?? 0);
         onboardError = null;
         showOnboardModal = true;
@@ -933,7 +1258,7 @@ else
     {
         onboardEmpCode = m.EmpCode;
         onboardFullName = !string.IsNullOrWhiteSpace(m.EmployeeName) && !m.EmployeeName.StartsWith("Unregistered") ? m.EmployeeName : string.Empty;
-        onboardDesignation = "General Mazdoor";
+        onboardDesignation = "Colliery Worker";
         onboardSubAreaId = m.SubAreaId ?? (permittedSubAreas.FirstOrDefault()?.Id ?? 0);
         onboardError = null;
         showOnboardModal = true;
@@ -999,6 +1324,317 @@ else
         catch (Exception ex)
         {
             errorMessage = $"Failed to dismiss punch: {ex.Message}";
+        }
+    }
+
+    private void OpenRegularizeModal(DailyMusterRollDto m)
+    {
+        selectedMusterRecord = m;
+        regularizeInTime = m.FirstInTime.HasValue ? TimeOnly.FromDateTime(m.FirstInTime.Value) : null;
+        regularizeOutTime = m.LastOutTime.HasValue ? TimeOnly.FromDateTime(m.LastOutTime.Value) : null;
+        regularizeShiftCode = m.ShiftCode;
+
+        if (!string.IsNullOrEmpty(m.CorrectionReason))
+        {
+            var presets = new[] {
+                "Pithead turnstile power failure / Jam",
+                "Biometric reader / Fingerprint sensor fault",
+                "Deputed on official duty / ECL HQ movement",
+                "Emergency mine rescue / Drainage deployment",
+                "Shift handover delay approved by Colliery Manager"
+            };
+            if (presets.Contains(m.CorrectionReason))
+            {
+                regularizeSelectedReasonPreset = m.CorrectionReason;
+                regularizeCustomReason = string.Empty;
+            }
+            else
+            {
+                regularizeSelectedReasonPreset = "Custom";
+                regularizeCustomReason = m.CorrectionReason;
+            }
+        }
+        else
+        {
+            regularizeSelectedReasonPreset = "Pithead turnstile power failure / Jam";
+            regularizeCustomReason = string.Empty;
+        }
+
+        regularizeModalError = null;
+        isRegularizeModalOpen = true;
+    }
+
+    private void CloseRegularizeModal()
+    {
+        isRegularizeModalOpen = false;
+        selectedMusterRecord = null;
+        regularizeModalError = null;
+    }
+
+    private async Task SaveRegularizationAsync()
+    {
+        if (selectedMusterRecord == null) return;
+
+        string reason = regularizeSelectedReasonPreset == "Custom" ? regularizeCustomReason : regularizeSelectedReasonPreset;
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            regularizeModalError = "Please specify a regularization reason.";
+            return;
+        }
+
+        DateTime? inTime = regularizeInTime.HasValue 
+            ? selectedMusterRecord.AttendanceDate.Date.Add(regularizeInTime.Value.ToTimeSpan()) 
+            : null;
+
+        DateTime? outTime = regularizeOutTime.HasValue 
+            ? selectedMusterRecord.AttendanceDate.Date.Add(regularizeOutTime.Value.ToTimeSpan()) 
+            : null;
+
+        if (inTime.HasValue && outTime.HasValue && outTime < inTime)
+        {
+            outTime = outTime.Value.AddDays(1);
+        }
+
+        isRegularizing = true;
+        regularizeModalError = null;
+
+        try
+        {
+            var dto = new RegularizeAttendanceDto(
+                selectedMusterRecord.Id,
+                inTime,
+                outTime,
+                reason,
+                UserSession.CurrentUser?.Username ?? "Admin",
+                regularizeShiftCode
+            );
+
+            var (success, msg) = await AttendanceProcessingService.RegularizeAttendanceAsync(dto);
+            if (success)
+            {
+                successMessage = msg;
+                CloseRegularizeModal();
+                await LoadMusterRollAsync();
+            }
+            else
+            {
+                regularizeModalError = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            regularizeModalError = "Failed to save regularization: " + ex.Message;
+        }
+        finally
+        {
+            isRegularizing = false;
+        }
+    }
+
+    private async Task RevertRegularizationAsync()
+    {
+        if (selectedMusterRecord == null) return;
+
+        isRegularizing = true;
+        regularizeModalError = null;
+
+        try
+        {
+            var (success, msg) = await AttendanceProcessingService.RevertToMachinePunchesAsync(selectedMusterRecord.Id);
+            if (success)
+            {
+                successMessage = msg;
+                CloseRegularizeModal();
+                await LoadMusterRollAsync();
+            }
+            else
+            {
+                regularizeModalError = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            regularizeModalError = "Failed to revert record: " + ex.Message;
+        }
+        finally
+        {
+            isRegularizing = false;
+        }
+    }
+
+    private void OpenBulkRegularizeModal()
+    {
+        bulkRegularizeCsvText = string.Empty;
+        bulkRegularizeModalError = null;
+        bulkRegularizeModalSuccess = null;
+        isBulkRegularizeModalOpen = true;
+    }
+
+    private void CloseBulkRegularizeModal()
+    {
+        isBulkRegularizeModalOpen = false;
+        bulkRegularizeModalError = null;
+        bulkRegularizeModalSuccess = null;
+    }
+
+    private async Task DownloadSampleRegularizationCsvAsync()
+    {
+        string dToday = musterToDate.ToString("yyyy-MM-dd");
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("EmpCode,Date,InTime,OutTime,Reason");
+        sb.AppendLine($"ECL-7001,{dToday},08:30:00,16:30:00,Pithead turnstile power failure");
+        sb.AppendLine($"ECL-7002,{dToday},,17:00:00,Missed OUT punch due to rush");
+        sb.AppendLine($"ECL-7003,{dToday},08:45:00,,Missed IN punch due to sensor fault");
+        sb.AppendLine($"ECL-7004,{dToday},09:00:00,17:30:00,Deputed on official duty at ECL HQ");
+
+        string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
+        string fileName = "sample_bulk_regularization.csv";
+
+        await JS.InvokeVoidAsync("eval", $@"
+            var link = document.createElement('a');
+            link.download = '{fileName}';
+            link.href = 'data:text/csv;base64,{base64}';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        ");
+    }
+
+    private void FillSampleRegularizationData()
+    {
+        string dToday = musterToDate.ToString("yyyy-MM-dd");
+        bulkRegularizeCsvText = $"EmpCode,Date,InTime,OutTime,Reason\nECL-7001,{dToday},08:30:00,16:30:00,Pithead turnstile power failure\nECL-7002,{dToday},,17:00:00,Missed OUT punch due to rush\nECL-7003,{dToday},08:45:00,,Missed IN punch due to sensor fault\nECL-7004,{dToday},09:00:00,17:30:00,Deputed on official duty at ECL HQ";
+    }
+
+    private async Task HandleBulkRegularizeFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        bulkRegularizeModalError = null;
+        bulkRegularizeModalSuccess = null;
+
+        try
+        {
+            var file = e.File;
+            if (file == null) return;
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            bulkRegularizeCsvText = await reader.ReadToEndAsync();
+            bulkRegularizeModalSuccess = $"File '{file.Name}' loaded into editor below. Review and click 'Import & Regularize'.";
+        }
+        catch (Exception ex)
+        {
+            bulkRegularizeModalError = "Failed to read file: " + ex.Message;
+        }
+    }
+
+    private async Task ProcessBulkRegularizationUploadAsync()
+    {
+        if (string.IsNullOrWhiteSpace(bulkRegularizeCsvText))
+        {
+            bulkRegularizeModalError = "Please select a file or paste CSV data.";
+            return;
+        }
+
+        isBulkRegularizing = true;
+        bulkRegularizeModalError = null;
+        bulkRegularizeModalSuccess = null;
+
+        try
+        {
+            var lines = bulkRegularizeCsvText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var entries = new List<BulkRegularizeEntryDto>();
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].Trim();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                var parts = line.Split(new[] { ',', '\t', ';' });
+                if (parts.Length < 2) continue;
+
+                string code = parts[0].Trim();
+                if (code.Equals("EmpCode", StringComparison.OrdinalIgnoreCase) || code.Equals("Worker", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!DateTime.TryParse(parts[1].Trim(), out var targetDate))
+                {
+                    continue;
+                }
+
+                DateTime? inTime = null;
+                if (parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]))
+                {
+                    string rawIn = parts[2].Trim();
+                    if (TimeSpan.TryParse(rawIn, out var tsIn))
+                    {
+                        inTime = targetDate.Date.Add(tsIn);
+                    }
+                    else if (DateTime.TryParse(rawIn, out var dtIn))
+                    {
+                        inTime = dtIn;
+                    }
+                }
+
+                DateTime? outTime = null;
+                if (parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]))
+                {
+                    string rawOut = parts[3].Trim();
+                    if (TimeSpan.TryParse(rawOut, out var tsOut))
+                    {
+                        outTime = targetDate.Date.Add(tsOut);
+                        if (inTime.HasValue && outTime < inTime)
+                        {
+                            outTime = outTime.Value.AddDays(1);
+                        }
+                    }
+                    else if (DateTime.TryParse(rawOut, out var dtOut))
+                    {
+                        outTime = dtOut;
+                    }
+                }
+
+                string reason = parts.Length >= 5 && !string.IsNullOrWhiteSpace(parts[4])
+                    ? parts[4].Trim()
+                    : "Bulk Administrative Regularization";
+
+                string? shiftCode = parts.Length >= 6 && !string.IsNullOrWhiteSpace(parts[5])
+                    ? parts[5].Trim()
+                    : null;
+
+                entries.Add(new BulkRegularizeEntryDto(code, targetDate, inTime, outTime, reason, shiftCode));
+            }
+
+            if (entries.Count == 0)
+            {
+                bulkRegularizeModalError = "No valid regularization records found. Check the expected format.";
+                return;
+            }
+
+            var result = await AttendanceProcessingService.BulkRegularizeAsync(entries, UserSession.CurrentUser?.Username ?? "Admin");
+            
+            if (result.Errors.Count == 0)
+            {
+                successMessage = $"Successfully regularized and locked {result.SuccessCount} attendance record(s).";
+                CloseBulkRegularizeModal();
+                await LoadMusterRollAsync();
+            }
+            else
+            {
+                bulkRegularizeModalSuccess = $"Processed {result.SuccessCount} of {result.TotalCount} record(s).";
+                bulkRegularizeModalError = $"{result.Errors.Count} error(s): " + string.Join(" | ", result.Errors.Take(3));
+                await LoadMusterRollAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            bulkRegularizeModalError = "Bulk processing error: " + ex.Message;
+        }
+        finally
+        {
+            isBulkRegularizing = false;
         }
     }
 

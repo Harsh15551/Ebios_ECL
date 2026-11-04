@@ -9,6 +9,7 @@ public class AttendanceDailySummary
     
     public string EmpCode { get; set; } = string.Empty;
     public string? EmployeeName { get; set; }
+    public string? Designation { get; set; }
     public int? EmployeeId { get; set; }
     public Employee? Employee { get; set; }
     
@@ -35,6 +36,7 @@ public class AttendanceDailySummary
     public double TotalWorkHours { get; set; }
     public int OvertimeMinutes { get; set; }
     public int LateByMinutes { get; set; }
+    public int EarlyInMinutes { get; set; }
     public int EarlyExitMinutes { get; set; }
     
     // Attendance Evaluation:
@@ -43,6 +45,14 @@ public class AttendanceDailySummary
     
     // Roster Status: "Assigned", "Auto-Matched", "Manual-Overridden"
     public string RosterStatus { get; set; } = "Auto-Matched";
+    public bool IsHigherAuthority { get; set; } = false; // Executive single-punch exemption
+    
+    // Requirement 16: Manual Regularization & Audit Trail
+    public bool IsManuallyCorrected { get; set; } = false;
+    public string? CorrectionReason { get; set; }
+    public string? CorrectedBy { get; set; }
+    public DateTime? CorrectedAt { get; set; }
+    public bool IsSyncedToSap { get; set; } = false;
     
     public string? Remarks { get; set; }
     public bool IsVerified { get; set; }

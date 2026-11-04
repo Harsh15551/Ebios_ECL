@@ -53,7 +53,9 @@ public class UserService : IUserService
                 u.SubArea != null ? u.SubArea.SubAreaName : null,
                 u.TwoFactorEnabled,
                 u.IsActive,
-                u.CreatedAt
+                u.CreatedAt,
+                u.CanManageEmployees,
+                u.CanManageShifts
             ))
             .ToListAsync();
     }
@@ -81,7 +83,9 @@ public class UserService : IUserService
             u.SubArea != null ? u.SubArea.SubAreaName : null,
             u.TwoFactorEnabled,
             u.IsActive,
-            u.CreatedAt);
+            u.CreatedAt,
+            u.CanManageEmployees,
+            u.CanManageShifts);
     }
 
     public async Task<UserDto> CreateUserAsync(CreateUserDto dto)
@@ -114,7 +118,9 @@ public class UserService : IUserService
             SubAreaId = dto.Role == UserRole.UnitPersonnelManager ? dto.SubAreaId : null,
             TwoFactorEnabled = false,
             IsActive = true,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            CanManageEmployees = dto.CanManageEmployees,
+            CanManageShifts = dto.CanManageShifts
         };
 
         _context.Users.Add(user);
@@ -131,6 +137,21 @@ public class UserService : IUserService
         user.IsActive = !user.IsActive;
         await _context.SaveChangesAsync();
         _logger.LogInformation("Toggled active status for user {Username} to {Status}", user.Username, user.IsActive);
+        return true;
+    }
+
+    public async Task<bool> UpdateUserPermissionsAsync(UpdateUserPermissionsDto dto)
+    {
+        var user = await _context.Users.FindAsync(dto.UserId);
+        if (user == null) return false;
+
+        user.CanManageEmployees = dto.CanManageEmployees;
+        user.CanManageShifts = dto.CanManageShifts;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Updated permissions for user {Username} (Id: {UserId}): CanManageEmployees={Employees}, CanManageShifts={Shifts}",
+            user.Username, user.Id, user.CanManageEmployees, user.CanManageShifts);
+
         return true;
     }
 
@@ -175,7 +196,9 @@ public class UserService : IUserService
             user.SubArea != null ? user.SubArea.SubAreaName : null,
             user.TwoFactorEnabled,
             user.IsActive,
-            user.CreatedAt
+            user.CreatedAt,
+            user.CanManageEmployees,
+            user.CanManageShifts
         );
 
         return new AuthResultDto(true, null, userDto);

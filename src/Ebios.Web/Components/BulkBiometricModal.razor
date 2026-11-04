@@ -1,0 +1,228 @@
+@inject IBiometricFormService BiometricService
+@inject IJSRuntime JS
+
+@if (IsOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.6); z-index: 1060; overflow-y: auto;">
+        <div class="modal-dialog modal-lg modal-dialog-centered my-4">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-primary text-white py-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fs-4">📦</span>
+                        <div>
+                            <h5 class="modal-title fw-bold mb-0">Bulk Biometric Registration Upload</h5>
+                            <small class="text-white-50">Upload employee registration particulars (CSV) or photos (ZIP)</small>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" @onclick="Close"></button>
+                </div>
+
+                <div class="modal-body p-4 bg-light">
+                    <!-- Nav tabs -->
+                    <ul class="nav nav-pills nav-fill mb-3 bg-white p-1 rounded border shadow-sm">
+                        <li class="nav-item">
+                            <button class="nav-link @(activeTab == "csv" ? "active" : "")" @onclick="@(() => SetTab("csv"))">
+                                <i class="bi bi-file-earmark-spreadsheet me-1"></i> 1. Bulk Particulars (CSV)
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link @(activeTab == "zip" ? "active" : "")" @onclick="@(() => SetTab("zip"))">
+                                <i class="bi bi-file-zip me-1"></i> 2. Bulk Photos (ZIP)
+                            </button>
+                        </li>
+                    </ul>
+
+                    @if (isProcessing)
+                    {
+                        <div class="text-center py-5 bg-white rounded border p-4 shadow-sm">
+                            <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+                            <h5 class="fw-bold">Processing @(activeTab == "csv" ? "CSV Particulars" : "ZIP Photos")...</h5>
+                            <p class="text-muted mb-0">Please wait while files are processed and optimized on disk.</p>
+                        </div>
+                    }
+                    else if (activeTab == "csv")
+                    {
+                        <!-- TAB 1: CSV Particulars Upload -->
+                        <div class="card border-0 shadow-sm p-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div>
+                                    <h6 class="fw-bold mb-1">Step 1: Download CSV Template</h6>
+                                    <p class="text-muted small mb-0">Download the formatted CSV template with all 11 particulars and committee headers.</p>
+                                </div>
+                                <a href="/api/biometric-forms/template-csv" target="_blank" class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-download me-1"></i> Download Template CSV
+                                </a>
+                            </div>
+
+                            <hr class="my-3" />
+
+                            <div class="mb-3">
+                                <h6 class="fw-bold mb-1">Step 2: Upload Completed CSV</h6>
+                                <p class="text-muted small mb-2">Select the filled CSV file from your computer to populate particulars in bulk.</p>
+                                
+                                <div class="border border-dashed rounded p-4 text-center bg-light">
+                                    <i class="bi bi-cloud-arrow-up fs-1 text-primary mb-2 d-block"></i>
+                                    <label class="btn btn-primary px-4 py-2" style="cursor: pointer;">
+                                        <span>Browse CSV File</span>
+                                        <InputFile OnChange="HandleCsvUpload" accept=".csv" class="d-none" />
+                                    </label>
+                                    <div class="text-muted small mt-2">Accepts UTF-8 encoded .csv files</div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <!-- TAB 2: ZIP Photos Upload -->
+                        <div class="card border-0 shadow-sm p-4">
+                            <h6 class="fw-bold mb-2">Bulk Photos ZIP Structure Guidelines:</h6>
+                            <div class="alert alert-info py-2 small mb-3">
+                                <div><strong>Option A (Recommended - Folder per Worker):</strong></div>
+                                <code>archive.zip &rarr; TSA011/aadhaar.jpg, TSA011/idcard.jpg, TSA011/person.jpg, TSA011/template.jpg</code>
+                                <div class="mt-2"><strong>Option B (Flat files with EmpCode prefix):</strong></div>
+                                <code>archive.zip &rarr; TSA011_aadhaar.jpg, TSA011_idcard.jpg, TSA011_person.jpg, TSA011_template.jpg</code>
+                            </div>
+
+                            <div class="mb-3">
+                                <h6 class="fw-bold mb-1">Upload ZIP Archive</h6>
+                                <p class="text-muted small mb-2">The system will automatically match each photo to its employee and form box, compressing and storing them on server storage.</p>
+                                
+                                <div class="border border-dashed rounded p-4 text-center bg-light">
+                                    <i class="bi bi-file-earmark-zip fs-1 text-success mb-2 d-block"></i>
+                                    <label class="btn btn-success px-4 py-2" style="cursor: pointer;">
+                                        <span>Browse ZIP Archive</span>
+                                        <InputFile OnChange="HandleZipUpload" accept=".zip" class="d-none" />
+                                    </label>
+                                    <div class="text-muted small mt-2">Up to 250MB per ZIP batch</div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Results Summary -->
+                    @if (result != null)
+                    {
+                        <div class="card border-0 shadow-sm mt-3 p-3 @(result.FailureCount > 0 ? "border-start border-warning border-4" : "border-start border-success border-4")">
+                            <h6 class="fw-bold mb-2">Upload Results:</h6>
+                            <div class="d-flex gap-3 mb-2">
+                                <span class="badge bg-primary">Processed: @result.TotalProcessed</span>
+                                <span class="badge bg-success">Success: @result.SuccessCount</span>
+                                @if (result.FailureCount > 0)
+                                {
+                                    <span class="badge bg-danger">Issues: @result.FailureCount</span>
+                                }
+                            </div>
+
+                            @foreach (var s in result.SuccessSummaries)
+                            {
+                                <div class="text-success small fw-semibold mb-1">
+                                    <i class="bi bi-check-circle-fill me-1"></i> @s
+                                </div>
+                            }
+
+                            @if (result.Errors.Any())
+                            {
+                                <div class="alert alert-warning py-2 px-3 small mt-2 mb-0" style="max-height: 150px; overflow-y: auto;">
+                                    <strong>Warnings / Skipped:</strong>
+                                    <ul class="mb-0 ps-3">
+                                        @foreach (var err in result.Errors.Take(15))
+                                        {
+                                            <li>@err</li>
+                                        }
+                                        @if (result.Errors.Count > 15)
+                                        {
+                                            <li><em>...and @(result.Errors.Count - 15) more</em></li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="modal-footer bg-light py-2">
+                    <button type="button" class="btn btn-secondary" @onclick="Close">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback OnClosed { get; set; }
+    [Parameter] public string CurrentUser { get; set; } = "APM";
+
+    private string activeTab = "csv";
+    private bool isProcessing = false;
+    private BulkBiometricImportResult? result;
+
+    private void SetTab(string tab)
+    {
+        activeTab = tab;
+        result = null;
+    }
+
+    private async Task Close()
+    {
+        result = null;
+        isProcessing = false;
+        await OnClosed.InvokeAsync();
+    }
+
+    private async Task HandleCsvUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        isProcessing = true;
+        result = null;
+
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: 15 * 1024 * 1024);
+            result = await BiometricService.ImportBulkCsvAsync(stream, CurrentUser);
+        }
+        catch (Exception ex)
+        {
+            result = new BulkBiometricImportResult
+            {
+                FailureCount = 1,
+                Errors = new List<string> { $"Failed to import CSV: {ex.Message}" }
+            };
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task HandleZipUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        isProcessing = true;
+        result = null;
+
+        try
+        {
+            // Up to 250MB
+            using var stream = file.OpenReadStream(maxAllowedSize: 250 * 1024 * 1024);
+            result = await BiometricService.ImportBulkZipAsync(stream, CurrentUser);
+        }
+        catch (Exception ex)
+        {
+            result = new BulkBiometricImportResult
+            {
+                FailureCount = 1,
+                Errors = new List<string> { $"Failed to extract ZIP: {ex.Message}" }
+            };
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+}
+

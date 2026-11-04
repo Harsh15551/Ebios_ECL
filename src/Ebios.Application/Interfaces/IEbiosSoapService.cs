@@ -17,4 +17,8 @@ public interface IEbiosSoapService
         string locationCode, 
         string role = "Employee", 
         string verificationType = "None");
+    Task<(bool success, string message)> BlockUnblockUserOnDeviceAsync(
+        string deviceSerialNumber, 
+        string employeeCode, 
+        bool blockUser);
 }

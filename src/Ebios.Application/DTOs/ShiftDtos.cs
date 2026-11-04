@@ -71,6 +71,7 @@ public record DailyMusterRollDto(
     DateTime AttendanceDate,
     string EmpCode,
     string? EmployeeName,
+    string? Designation,
     int? EmployeeId,
     int? SubAreaId,
     string SubAreaName,
@@ -87,14 +88,45 @@ public record DailyMusterRollDto(
     double TotalWorkHours,
     int OvertimeMinutes,
     int LateByMinutes,
+    int EarlyInMinutes,
     int EarlyExitMinutes,
     string Status,
     string RosterStatus,
     string? Remarks,
     bool IsVerified,
     bool IsFlagged,
+    bool IsHigherAuthority,
+    bool IsManuallyCorrected,
+    string? CorrectionReason,
+    string? CorrectedBy,
+    DateTime? CorrectedAt,
+    bool IsSyncedToSap,
     DateTime CreatedAt,
     DateTime UpdatedAt
+);
+
+public record RegularizeAttendanceDto(
+    int SummaryId,
+    DateTime? InTime,
+    DateTime? OutTime,
+    string Reason,
+    string CorrectedBy,
+    string? ShiftCode = null
+);
+
+public record BulkRegularizeEntryDto(
+    string EmpCode,
+    DateTime Date,
+    DateTime? InTime,
+    DateTime? OutTime,
+    string Reason,
+    string? ShiftCode = null
+);
+
+public record BulkRegularizeResultDto(
+    int SuccessCount,
+    int TotalCount,
+    List<string> Errors
 );
 
 public record MusterRollFilterDto(

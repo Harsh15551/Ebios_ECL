@@ -4,7 +4,9 @@
 @inject IEmployeeService EmployeeService
 @inject IAreaService AreaService
 @inject IAttendanceService AttendanceService
+@inject IBiometricFormService BiometricService
 @inject UserSessionService UserSession
+@inject IJSRuntime JS
 
 <PageTitle>ECL - Colliery Workers & Personnel</PageTitle>
 
@@ -24,9 +26,18 @@
             {
                 <span class="badge bg-info text-dark">@(UserSession.CurrentUser?.SubAreaName) Unit Only</span>
             }
+
+            @if (!UserSession.CanManageEmployees)
+            {
+                <span class="badge bg-warning text-dark"><i class="bi bi-eye"></i> View-Only Access</span>
+            }
         </div>
         <p class="text-muted mb-0">
-            @if (UserSession.IsSuperAdmin)
+            @if (!UserSession.CanManageEmployees)
+            {
+                <span class="text-danger fw-semibold">Read-Only Mode: You have viewing access to colliery personnel. Adding, editing, and deactivating workers are restricted by ECL Admin.</span>
+            }
+            else if (UserSession.IsSuperAdmin)
             {
                 <span>Main Administrator: You have full authority to view, onboard, edit, and transfer workers across all 13 Mining Areas.</span>
             }
@@ -40,12 +51,35 @@
             }
         </p>
     </div>
-    <button class="btn btn-primary" @onclick="OpenCreateModal">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
-            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-        </svg>
-        Onboard Worker
-    </button>
+    @if (UserSession.CanManageEmployees)
+    {
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-info" @onclick="OpenBulkBiometricModal" title="Upload Biometric Particulars (CSV) or Photos (ZIP)">
+                <i class="bi bi-person-bounding-box me-1"></i> Bulk Biometric Upload
+            </button>
+            <button class="btn btn-outline-dark" @onclick="OpenBulkPrintModal" title="Bulk print or export biometric registration forms">
+                <i class="bi bi-printer me-1"></i> Bulk Print Forms
+            </button>
+            <button class="btn btn-outline-success" @onclick="OpenBulkEmployeeModal">
+                <i class="bi bi-file-earmark-spreadsheet me-1"></i> Bulk Worker Onboard
+            </button>
+            <button class="btn btn-outline-danger" @onclick="OpenBulkBlacklistModal">
+                <i class="bi bi-slash-circle me-1"></i> Bulk Gate Lock
+            </button>
+            <button class="btn btn-primary" @onclick="OpenCreateModal">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                    <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                </svg>
+                Onboard Worker
+            </button>
+        </div>
+    }
+    else
+    {
+        <span class="badge bg-secondary p-2">
+            <i class="bi bi-lock-fill me-1"></i> View-Only Mode
+        </span>
+    }
 </div>
 
 @if (!string.IsNullOrEmpty(successMessage))
@@ -68,7 +102,7 @@
 <div class="card shadow-sm mb-4">
     <div class="card-body">
         <div class="row g-3 align-items-center">
-            <div class="col-12 col-md-5">
+            <div class="col-12 col-md-4">
                 <div class="input-group">
                     <span class="input-group-text bg-white">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
@@ -79,7 +113,7 @@
                 </div>
             </div>
 
-            <div class="col-12 col-md-4">
+            <div class="col-12 col-md-3">
                 <select class="form-select" @bind="subAreaFilter">
                     <option value="0">All Permitted Units (@PermittedSubAreas.Count() Units)</option>
                     @foreach (var sub in PermittedSubAreas)
@@ -89,8 +123,16 @@
                 </select>
             </div>
 
-            <div class="col-12 col-md-3 text-md-end text-muted small">
-                Showing <strong>@FilteredEmployees.Count()</strong> of <strong>@employees.Count</strong> Workers
+            <div class="col-12 col-md-3">
+                <select class="form-select" @bind="authorityFilter">
+                    <option value="all">All Personnel Categories</option>
+                    <option value="authorities">👔 Higher Authorities / Executives</option>
+                    <option value="workers">Colliery Workers Only</option>
+                </select>
+            </div>
+
+            <div class="col-12 col-md-2 text-md-end text-muted small">
+                <strong>@FilteredEmployees.Count()</strong> of <strong>@employees.Count</strong> Workers
             </div>
         </div>
     </div>
@@ -138,6 +180,12 @@ else
                                 </td>
                                 <td class="fw-bold text-dark">
                                     @emp.FullName
+                                    @if (emp.IsHigherAuthority)
+                                    {
+                                        <span class="badge ms-1" style="background-color: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; font-size: 0.72rem;" title="Higher Authority / Executive: single-punch attendance permitted">
+                                            👔 Higher Authority
+                                        </span>
+                                    }
                                 </td>
                                 <td>
                                     <span class="badge bg-light text-dark border">@emp.Designation</span>
@@ -172,38 +220,68 @@ else
                                     }
                                 </td>
                                 <td>
-                                    @if (emp.IsActive)
+                                    @if (emp.IsBlacklisted)
                                     {
-                                        <span class="badge bg-success">Active</span>
+                                        <span class="badge bg-danger" title="Worker is Blacklisted and physically blocked on turnstiles">🚫 Blacklisted</span>
+                                    }
+                                    else if (!emp.IsActive)
+                                    {
+                                        <span class="badge bg-danger" title="Access blocked on all turnstile machines">🔒 Fully Blocked</span>
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(emp.BlockedDeviceSerials))
+                                    {
+                                        <span class="badge bg-warning text-dark" title="Blocked on specific machines: @emp.BlockedDeviceSerials">⚠️ Partial Gate Access</span>
                                     }
                                     else
                                     {
-                                        <span class="badge bg-secondary">Inactive</span>
+                                        <span class="badge bg-success">Active / Allowed</span>
                                     }
                                 </td>
-                                <td class="text-end">
-                                    <!-- View Logs Button -->
+                                <td class="text-end text-nowrap">
+                                    <!-- View Logs Button (Always accessible) -->
                                     <button class="btn btn-sm btn-outline-info me-1" @onclick="@(() => OpenEmployeeLogsModal(emp))" title="View worker punch logs">
                                         📋 Logs
                                     </button>
 
-                                    <!-- Edit Button (Permitted for SuperAdmin and Respected Area Admin) -->
-                                    <button class="btn btn-sm btn-outline-secondary me-1" @onclick="@(() => OpenEditModal(emp))" title="Edit details or transfer location">
-                                        ✏️ Edit
-                                    </button>
-
-                                    <!-- Re-sync Button (Only shown if sync failed) -->
-                                    @if (!emp.IsSyncedToEbios)
+                                    @if (UserSession.CanManageEmployees)
                                     {
-                                        <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncEmployeeAsync(emp))" title="Retry push worker to eBios">
-                                            Retry Sync
-                                        </button>
-                                    }
+                                        @if (UserSession.IsSuperAdmin || UserSession.IsAreaAdmin)
+                                        {
+                                            <button class="btn btn-sm me-1" 
+                                                    style="@(emp.IsHigherAuthority ? "color: #5b21b6; background-color: #ede9fe; border: 1px solid #c4b5fd;" : "color: #4b5563; background-color: #f3f4f6; border: 1px solid #d1d5db;")"
+                                                    @onclick="@(() => ToggleHigherAuthorityStatusAsync(emp))" 
+                                                    title="@(emp.IsHigherAuthority ? "Revoke Higher Authority status" : "Map as Higher Authority / Executive")">
+                                                @(emp.IsHigherAuthority ? "👔 Authority" : "👔 Set Authority")
+                                            </button>
+                                        }
 
-                                    <!-- Status Toggle -->
-                                    <button class="btn btn-sm @(emp.IsActive ? "btn-outline-danger" : "btn-outline-success")" @onclick="@(() => ToggleStatusAsync(emp))">
-                                        @(emp.IsActive ? "Deactivate" : "Activate")
-                                    </button>
+                                        <!-- Biometric Registration Template Form (ECL & WEBEL) -->
+                                        <button class="btn btn-sm btn-outline-primary me-1" @onclick="@(() => OpenBiometricFormModal(emp))" title="Biometric Registration Template (ECL & WEBEL)">
+                                            📋 Biometric Form
+                                        </button>
+
+                                        <!-- Edit Button (Permitted for SuperAdmin and Respected Area Admin) -->
+                                        <button class="btn btn-sm btn-outline-secondary me-1" @onclick="@(() => OpenEditModal(emp))" title="Edit details or transfer location">
+                                            ✏️ Edit
+                                        </button>
+
+                                        <!-- Turnstile Machine Access Control Button -->
+                                        <button class="btn btn-sm btn-outline-dark me-1" @onclick="@(() => OpenDeviceAccessModal(emp))" title="Control physical turnstile machine access per machine">
+                                            🔒 Gate Access
+                                        </button>
+
+                                        <!-- Re-sync Button (Only shown if sync failed) -->
+                                        @if (!emp.IsSyncedToEbios)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncEmployeeAsync(emp))" title="Retry push worker to eBios">
+                                                Retry Sync
+                                            </button>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-light text-muted border">View Only</span>
+                                    }
                                 </td>
                             </tr>
                         }
@@ -293,19 +371,55 @@ else
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Designation / Trade</label>
-                        <select class="form-select" @bind="newDesignation">
-                            <option value="General Mazdoor">General Mazdoor (Surface/Underground)</option>
-                            <option value="Overman (Underground)">Overman (Underground)</option>
-                            <option value="Mining Sirdar">Mining Sirdar</option>
-                            <option value="Shot Firer">Shot Firer</option>
-                            <option value="Dumper Operator">Dumper Operator</option>
-                            <option value="Excavator Operator">Excavator Operator</option>
-                            <option value="Electrician / Fitter">Electrician / Fitter</option>
-                            <option value="Clerk / Staff">Clerk / Staff</option>
-                            <option value="Assistant Manager">Assistant Manager</option>
-                        </select>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label fw-semibold mb-0">Designation / Role</label>
+                            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 small" @onclick="ToggleInlineCreateAdd">
+                                @(showInlineCreateAdd ? "✕ Cancel" : "➕ Add New")
+                            </button>
+                        </div>
+
+                        @if (showInlineCreateAdd)
+                        {
+                            <div class="card card-body bg-light p-2 mb-2 border shadow-sm">
+                                <div class="d-flex gap-2">
+                                    <input type="text" class="form-control form-control-sm" placeholder="Type new designation..." @bind="inlineCreateTitle" @onkeydown="HandleInlineCreateKeyDown" />
+                                    <button type="button" class="btn btn-sm btn-primary text-nowrap" @onclick="SaveInlineCreateDesignationAsync">Add to List</button>
+                                </div>
+                                @if (!string.IsNullOrEmpty(inlineCreateError))
+                                {
+                                    <div class="text-danger small mt-1">@inlineCreateError</div>
+                                }
+                            </div>
+                        }
+
+                        <div class="input-group">
+                            <select class="form-select" @bind="newDesignationSelection">
+                                @foreach (var d in availableDesignations)
+                                {
+                                    <option value="@d">@d</option>
+                                }
+                            </select>
+                            @if (availableDesignations.Count > 1 && !string.IsNullOrWhiteSpace(newDesignationSelection))
+                            {
+                                <button class="btn btn-outline-danger btn-sm" type="button" title="Delete '@newDesignationSelection' from list" @onclick="@(() => DeleteCurrentDesignationAsync(newDesignationSelection))">
+                                    🗑️
+                                </button>
+                            }
+                        </div>
                     </div>
+
+                    @if (UserSession.IsSuperAdmin || UserSession.IsAreaAdmin)
+                    {
+                        <div class="form-check form-switch mb-3 p-2 bg-light rounded border">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" id="newHigherAuthSwitch" @bind="newIsHigherAuthority" />
+                            <label class="form-check-label fw-semibold" for="newHigherAuthSwitch">
+                                👔 Higher Authority / Executive
+                            </label>
+                            <div class="form-text text-muted" style="font-size: 0.78rem;">
+                                Single-punch attendance permitted; exempt from shift timing and late marks.
+                            </div>
+                        </div>
+                    }
 
                     <div class="alert alert-light border py-2 small text-muted mb-0">
                         <strong>Biometric Auto-Enrollment:</strong> This worker will be automatically registered with turnstiles at this colliery.
@@ -454,18 +568,41 @@ else
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Designation / Role</label>
-                        <select class="form-select" @bind="editDesignation">
-                            <option value="General Mazdoor">General Mazdoor (Surface/Underground)</option>
-                            <option value="Overman (Underground)">Overman (Underground)</option>
-                            <option value="Mining Sirdar">Mining Sirdar</option>
-                            <option value="Shot Firer">Shot Firer</option>
-                            <option value="Dumper Operator">Dumper Operator</option>
-                            <option value="Excavator Operator">Excavator Operator</option>
-                            <option value="Electrician / Fitter">Electrician / Fitter</option>
-                            <option value="Clerk / Staff">Clerk / Staff</option>
-                            <option value="Assistant Manager">Assistant Manager</option>
-                        </select>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label fw-semibold mb-0">Designation / Role</label>
+                            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 small" @onclick="ToggleInlineEditAdd">
+                                @(showInlineEditAdd ? "✕ Cancel" : "➕ Add New")
+                            </button>
+                        </div>
+
+                        @if (showInlineEditAdd)
+                        {
+                            <div class="card card-body bg-light p-2 mb-2 border shadow-sm">
+                                <div class="d-flex gap-2">
+                                    <input type="text" class="form-control form-control-sm" placeholder="Type new designation..." @bind="inlineEditTitle" @onkeydown="HandleInlineEditKeyDown" />
+                                    <button type="button" class="btn btn-sm btn-primary text-nowrap" @onclick="SaveInlineEditDesignationAsync">Add to List</button>
+                                </div>
+                                @if (!string.IsNullOrEmpty(inlineEditError))
+                                {
+                                    <div class="text-danger small mt-1">@inlineEditError</div>
+                                }
+                            </div>
+                        }
+
+                        <div class="input-group">
+                            <select class="form-select" @bind="editDesignationSelection">
+                                @foreach (var d in availableDesignations)
+                                {
+                                    <option value="@d">@d</option>
+                                }
+                            </select>
+                            @if (availableDesignations.Count > 1 && !string.IsNullOrWhiteSpace(editDesignationSelection))
+                            {
+                                <button class="btn btn-outline-danger btn-sm" type="button" title="Delete '@editDesignationSelection' from list" @onclick="@(() => DeleteCurrentDesignationAsync(editDesignationSelection))">
+                                    🗑️
+                                </button>
+                            }
+                        </div>
                     </div>
 
                     <div class="mb-3">
@@ -525,6 +662,19 @@ else
                             </div>
                         }
                     </div>
+
+                    @if (UserSession.IsSuperAdmin || UserSession.IsAreaAdmin)
+                    {
+                        <div class="form-check form-switch mb-3 p-2 bg-light rounded border">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" id="editHigherAuthSwitch" @bind="editIsHigherAuthority" />
+                            <label class="form-check-label fw-semibold" for="editHigherAuthSwitch">
+                                👔 Higher Authority / Executive
+                            </label>
+                            <div class="form-text text-muted" style="font-size: 0.78rem;">
+                                Single-punch attendance permitted; exempt from shift timing and late marks.
+                            </div>
+                        </div>
+                    }
 
                     <div class="alert alert-info py-2 small mb-0">
                         <strong>Automatic Biometric Re-Sync:</strong> Saving will update this worker's location in the central eBios biometric system so gate attendance readers immediately update.
@@ -644,14 +794,353 @@ else
     </div>
 }
 
+<!-- Modal: Bulk Turnstile Gate Block -->
+@if (isBulkBlacklistModalOpen)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title fw-bold">
+                        <i class="bi bi-slash-circle me-2"></i> Bulk Gate Lock
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseBulkBlacklistModal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    @if (!string.IsNullOrEmpty(bulkModalError))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">@bulkModalError</div>
+                    }
+                    @if (!string.IsNullOrEmpty(bulkModalSuccess))
+                    {
+                        <div class="alert alert-success py-2 small mb-3">@bulkModalSuccess</div>
+                    }
+
+                    <div class="mb-3 p-3 bg-light rounded border">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label fw-semibold small mb-0">Upload CSV File</label>
+                            <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none fw-semibold" @onclick="DownloadSampleBlacklistCsvAsync">
+                                📥 Download Sample CSV
+                            </button>
+                        </div>
+                        <InputFile OnChange="HandleBulkBlacklistFileUpload" class="form-control form-control-sm" accept=".csv,.txt" />
+                        <div class="form-text text-muted" style="font-size: 0.78rem;">
+                            Expected format: <code>EmpCode, DeviceSerialNumber</code> (or test with <code>sample_bulk_blacklist.csv</code>)
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small">Or Enter Manually</label>
+                        <textarea class="form-control font-monospace form-control-sm" rows="5" placeholder="ECL-7001, DEV-BIO-001&#10;ECL-7002, DEV-BIO-002&#10;ECL-7003, ALL" @bind="bulkEmpCodesInput"></textarea>
+                        <div class="form-text text-muted" style="font-size: 0.78rem;">
+                            Format: <code>EmpCode, SerialNumber</code> (use <code>ALL</code> or code alone to block all machines).
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseBulkBlacklistModal" disabled="@isBulkProcessing">Cancel</button>
+                    <button type="button" class="btn btn-danger fw-semibold" @onclick="ExecuteBulkBlacklistAsync" disabled="@isBulkProcessing">
+                        @if (isBulkProcessing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                            <span>Locking Turnstiles...</span>
+                        }
+                        else
+                        {
+                            <span>Confirm Lock</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Bulk Worker Onboard (Excel / CSV) -->
+@if (isBulkEmployeeModalOpen)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-success text-white py-2">
+                    <h6 class="modal-title fw-bold mb-0">
+                        <i class="bi bi-file-earmark-spreadsheet me-2"></i> Bulk Worker Onboard (Excel / CSV)
+                    </h6>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseBulkEmployeeModal"></button>
+                </div>
+                <div class="modal-body p-3">
+                    @if (!string.IsNullOrEmpty(bulkEmpModalError))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">@bulkEmpModalError</div>
+                    }
+                    @if (!string.IsNullOrEmpty(bulkEmpModalSuccess))
+                    {
+                        <div class="alert alert-success py-2 small mb-3">@bulkEmpModalSuccess</div>
+                    }
+
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="small fw-semibold text-secondary">Step 1: Choose File OR Paste Data</span>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-success" @onclick="DownloadSampleEmployeesCsvAsync" title="Download sample_bulk_employees.csv">
+                                📥 Download Sample Template
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="FillSampleEmployeeData" title="Auto-fill sample data">
+                                📋 Fill Sample Data
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- File Picker -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Upload CSV / Excel File</label>
+                        <InputFile OnChange="HandleBulkEmployeeFileUpload" class="form-control form-control-sm" accept=".csv,.txt" />
+                        <small class="text-muted">Select <code>sample_bulk_employees.csv</code> from your workspace or any CSV export.</small>
+                    </div>
+
+                    <div class="alert alert-info py-2 small mb-3">
+                        <strong>Expected Format:</strong> <code>EmpCode, FullName, Designation, CollieryUnit, IsHigherAuthority(Yes/No)</code><br />
+                        <span class="text-muted">Delimiters: comma (<code>,</code>) or tab. CollieryUnit can be SubArea name or ID.</span>
+                    </div>
+
+                    <!-- Direct Textarea -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">CSV / Excel Clipboard Data</label>
+                        <textarea class="form-control font-monospace small" rows="6" placeholder="EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority&#10;ECL-8001,Rajesh Kumar,Mining Sirdar,Sodepur Colliery,No&#10;ECL-8002,Sunil Mondal,Overman,Chinukuri Pit 1,No&#10;ECL-8003,Amit Banerjee,Area General Manager,Sodepur Colliery,Yes" @bind="bulkEmployeeCsvText"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer py-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="CloseBulkEmployeeModal" disabled="@isBulkEmployeeSaving">Cancel</button>
+                    <button type="button" class="btn btn-success btn-sm fw-semibold" @onclick="ExecuteBulkEmployeeUploadAsync" disabled="@isBulkEmployeeSaving">
+                        @if (isBulkEmployeeSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Onboarding Workers...</span>
+                        }
+                        else
+                        {
+                            <span>Import & Onboard</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Per-Machine Turnstile Gate Access Control -->
+@if (showDeviceAccessModal && targetDeviceEmp != null)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fw-bold">
+                        <i class="bi bi-shield-lock text-warning me-2"></i> Turnstile Gate Access Control
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseDeviceAccessModal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <!-- Worker Details Banner -->
+                    <div class="card border-0 bg-light p-3 mb-3">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h5 class="fw-bold mb-1 text-dark">@targetDeviceEmp.FullName</h5>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge bg-primary font-monospace">@targetDeviceEmp.EmpCode</span>
+                                    <span class="badge bg-secondary">@targetDeviceEmp.Designation</span>
+                                    <span class="text-muted small">@targetDeviceEmp.SubAreaName (@targetDeviceEmp.AreaName)</span>
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                @if (targetDeviceEmp.IsBlacklisted)
+                                {
+                                    <span class="badge bg-danger fs-6">🚫 Blacklisted</span>
+                                }
+                                else if (!targetDeviceEmp.IsActive)
+                                {
+                                    <span class="badge bg-danger fs-6">🔒 Fully Blocked</span>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(targetDeviceEmp.BlockedDeviceSerials))
+                                {
+                                    <span class="badge bg-warning text-dark fs-6">⚠️ Partial Gate Access</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success fs-6">● All Gates Active</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(deviceModalError))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">@deviceModalError</div>
+                    }
+                    @if (!string.IsNullOrEmpty(deviceModalSuccess))
+                    {
+                        <div class="alert alert-success py-2 small mb-3">@deviceModalSuccess</div>
+                    }
+
+                    <!-- Global Bulk Controls for this Worker -->
+                    <div class="d-flex justify-content-between align-items-center mb-3 p-2 border rounded bg-white">
+                        <div class="small text-muted">
+                            <i class="bi bi-info-circle me-1"></i> Control physical biometric turnstile machines across assigned collieries.
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-danger" @onclick="BlockAllMachinesForTargetAsync" disabled="@isDeviceProcessing">
+                                🚫 Block All Machines
+                            </button>
+                            <button class="btn btn-sm btn-outline-success" @onclick="UnblockAllMachinesForTargetAsync" disabled="@isDeviceProcessing">
+                                ✅ Allow All Machines
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Machine Access List -->
+                    @if (isLoadingDevices)
+                    {
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <div class="text-muted small mt-2">Checking turnstile machines...</div>
+                        </div>
+                    }
+                    else if (!targetWorkerDevices.Any())
+                    {
+                        <div class="alert alert-info small">
+                            <i class="bi bi-info-circle me-1"></i> No biometric devices are currently registered in this worker's assigned colliery units (@targetDeviceEmp.SubAreaName).
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive border rounded">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead class="table-light small">
+                                    <tr>
+                                        <th>Turnstile Machine</th>
+                                        <th>Serial / Hardware ID</th>
+                                        <th>Colliery / Unit</th>
+                                        <th>Direction</th>
+                                        <th>Access Status</th>
+                                        <th class="text-end">Hardware Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var dev in targetWorkerDevices)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div class="fw-semibold text-dark">@dev.DeviceName</div>
+                                            </td>
+                                            <td>
+                                                <span class="font-monospace small bg-light p-1 rounded border">@dev.SerialNumber</span>
+                                            </td>
+                                            <td>
+                                                <span class="small text-muted">@dev.SubAreaName</span>
+                                            </td>
+                                            <td>
+                                                <span class="badge @(dev.Direction == "IN" ? "bg-info" : dev.Direction == "OUT" ? "bg-warning text-dark" : "bg-secondary")">
+                                                    @dev.Direction
+                                                </span>
+                                            </td>
+                                            <td>
+                                                @if (dev.IsBlocked)
+                                                {
+                                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                                        🔒 Blocked (Denied)
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                        ● Active (Allowed)
+                                                    </span>
+                                                }
+                                            </td>
+                                            <td class="text-end">
+                                                @if (dev.IsBlocked)
+                                                {
+                                                    <button class="btn btn-sm btn-success" @onclick="() => ToggleDeviceAccessAsync(dev.SerialNumber, false)" disabled="@isDeviceProcessing">
+                                                        <i class="bi bi-unlock"></i> Allow Access
+                                                    </button>
+                                                }
+                                                else
+                                                {
+                                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => ToggleDeviceAccessAsync(dev.SerialNumber, true)" disabled="@isDeviceProcessing">
+                                                        <i class="bi bi-lock"></i> Block Machine
+                                                    </button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer bg-light">
+                    @if (isDeviceProcessing)
+                    {
+                        <div class="me-auto text-primary small d-flex align-items-center">
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                            <span>Communicating with turnstile hardware...</span>
+                        </div>
+                    }
+                    <button type="button" class="btn btn-secondary" @onclick="CloseDeviceAccessModal" disabled="@isDeviceProcessing">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Biometric Registration Modals -->
+<BiometricFormModal IsOpen="@isBiometricModalOpen" Model="@activeBiometricForm" CurrentUser="@(UserSession.CurrentUser?.Username ?? "APM")" OnClosed="CloseBiometricFormModal" />
+<BulkBiometricModal IsOpen="@isBulkBiometricModalOpen" CurrentUser="@(UserSession.CurrentUser?.Username ?? "APM")" OnClosed="@(() => isBulkBiometricModalOpen = false)" />
+<BulkPrintBiometricModal IsOpen="@isBulkPrintModalOpen" OnClosed="@(() => isBulkPrintModalOpen = false)" />
+
 @code {
     private List<EmployeeDto> employees = new();
     private List<SubAreaDto> allSubAreas = new();
     private bool isLoading = true;
 
+    // Biometric Registration Modals State
+    private bool isBiometricModalOpen = false;
+    private BiometricFormDto? activeBiometricForm;
+    private bool isBulkBiometricModalOpen = false;
+    private bool isBulkPrintModalOpen = false;
+
+    private async Task OpenBiometricFormModal(EmployeeDto emp)
+    {
+        try
+        {
+            activeBiometricForm = await BiometricService.GetOrCreateFormByEmpCodeAsync(emp.EmpCode);
+            isBiometricModalOpen = true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Could not load biometric form for worker {emp.EmpCode}: {ex.Message}";
+        }
+    }
+
+    private void CloseBiometricFormModal()
+    {
+        isBiometricModalOpen = false;
+        activeBiometricForm = null;
+    }
+
+    private void OpenBulkBiometricModal()
+    {
+        isBulkBiometricModalOpen = true;
+    }
+
+    private void OpenBulkPrintModal()
+    {
+        isBulkPrintModalOpen = true;
+    }
+
     // Filters
     private string searchTerm = string.Empty;
     private int subAreaFilter = 0;
+    private string authorityFilter = "all";
 
     // Alerts
     private string? successMessage;
@@ -664,7 +1153,7 @@ else
     private int newSubAreaId = 0;
     private string newEmpCode = string.Empty;
     private string newFullName = string.Empty;
-    private string newDesignation = "General Mazdoor";
+    private bool newIsHigherAuthority = false;
     private List<int> newAdditionalSubAreaIds = new();
     private int selectedAdditionalSubAreaId = 0;
 
@@ -674,10 +1163,25 @@ else
     private int editingEmployeeId = 0;
     private string editEmpCode = string.Empty;
     private string editFullName = string.Empty;
-    private string editDesignation = "General Mazdoor";
+    private bool editIsHigherAuthority = false;
     private int editSubAreaId = 0;
     private List<int> editAdditionalSubAreaIds = new();
     private int editSelectedAdditionalSubAreaId = 0;
+
+    // Designation Master state
+    private List<string> availableDesignations = new();
+    private string newDesignationSelection = "Colliery Worker";
+    private string editDesignationSelection = "Colliery Worker";
+
+    // Inline Add state for Create Modal
+    private bool showInlineCreateAdd = false;
+    private string inlineCreateTitle = string.Empty;
+    private string? inlineCreateError;
+
+    // Inline Add state for Edit Modal
+    private bool showInlineEditAdd = false;
+    private string inlineEditTitle = string.Empty;
+    private string? inlineEditError;
 
     // Modal state: View Worker Logs
     private bool showLogsModal = false;
@@ -765,6 +1269,7 @@ else
             int? subAreaIdScope = UserSession.IsUnitAdmin ? UserSession.CurrentUser?.SubAreaId : null;
 
             employees = await EmployeeService.GetEmployeesAsync(areaIdScope, subAreaIdScope);
+            availableDesignations = await EmployeeService.GetDesignationsAsync();
         }
         catch (Exception ex)
         {
@@ -794,6 +1299,15 @@ else
             if (subAreaFilter > 0)
             {
                 query = query.Where(e => e.SubAreaId == subAreaFilter);
+            }
+
+            if (authorityFilter == "authorities")
+            {
+                query = query.Where(e => e.IsHigherAuthority);
+            }
+            else if (authorityFilter == "workers")
+            {
+                query = query.Where(e => !e.IsHigherAuthority);
             }
 
             return query;
@@ -833,9 +1347,13 @@ else
         newSubAreaId = PermittedSubAreas.FirstOrDefault()?.Id ?? 0;
         newEmpCode = string.Empty;
         newFullName = string.Empty;
-        newDesignation = "General Mazdoor";
+        newIsHigherAuthority = false;
+        newDesignationSelection = availableDesignations.FirstOrDefault() ?? "Colliery Worker";
         newAdditionalSubAreaIds = new();
         selectedAdditionalSubAreaId = 0;
+        showInlineCreateAdd = false;
+        inlineCreateTitle = string.Empty;
+        inlineCreateError = null;
         modalError = null;
         showCreateModal = true;
     }
@@ -853,10 +1371,21 @@ else
         editingEmployeeId = emp.Id;
         editEmpCode = emp.EmpCode;
         editFullName = emp.FullName;
-        editDesignation = emp.Designation;
+        editIsHigherAuthority = emp.IsHigherAuthority;
+
+        if (!availableDesignations.Contains(emp.Designation) && !string.IsNullOrWhiteSpace(emp.Designation))
+        {
+            availableDesignations.Add(emp.Designation);
+        }
+
+        editDesignationSelection = !string.IsNullOrWhiteSpace(emp.Designation) ? emp.Designation : (availableDesignations.FirstOrDefault() ?? "Colliery Worker");
+
         editSubAreaId = emp.SubAreaId;
         editAdditionalSubAreaIds = emp.AdditionalSubAreaIds.ToList();
         editSelectedAdditionalSubAreaId = 0;
+        showInlineEditAdd = false;
+        inlineEditTitle = string.Empty;
+        inlineEditError = null;
         editModalError = null;
         showEditModal = true;
     }
@@ -891,10 +1420,12 @@ else
             return;
         }
 
+        string resolvedDesignation = !string.IsNullOrWhiteSpace(newDesignationSelection) ? newDesignationSelection : "Colliery Worker";
+
         isSaving = true;
         try
         {
-            var dto = new CreateEmployeeDto(newEmpCode.Trim().ToUpperInvariant(), newFullName.Trim(), newDesignation, newSubAreaId, newAdditionalSubAreaIds);
+            var dto = new CreateEmployeeDto(newEmpCode.Trim().ToUpperInvariant(), newFullName.Trim(), resolvedDesignation, newSubAreaId, newAdditionalSubAreaIds, newIsHigherAuthority);
             var result = await EmployeeService.CreateEmployeeAsync(dto);
             successMessage = $"Worker '{result.FullName}' ({result.EmpCode}) onboarded successfully. Biometric registration: {(result.IsSyncedToEbios ? "Synced" : "Queued")}.";
             showCreateModal = false;
@@ -922,14 +1453,16 @@ else
 
         if (editSubAreaId <= 0)
         {
-            editModalError = "Please select a Colliery Unit.";
+            modalError = "Please select a Colliery Unit.";
             return;
         }
+
+        string resolvedDesignation = !string.IsNullOrWhiteSpace(editDesignationSelection) ? editDesignationSelection : "Colliery Worker";
 
         isSaving = true;
         try
         {
-            var dto = new UpdateEmployeeDto(editFullName.Trim(), editDesignation, editSubAreaId, editAdditionalSubAreaIds);
+            var dto = new UpdateEmployeeDto(editFullName.Trim(), resolvedDesignation, editSubAreaId, editAdditionalSubAreaIds, editIsHigherAuthority);
             int? areaIdScope = UserSession.IsAreaAdmin ? UserSession.CurrentUser?.AreaId : null;
 
             var (success, msg) = await EmployeeService.UpdateEmployeeAsync(editingEmployeeId, dto, areaIdScope);
@@ -955,6 +1488,27 @@ else
         }
     }
 
+    private async Task ToggleHigherAuthorityStatusAsync(EmployeeDto emp)
+    {
+        try
+        {
+            var (success, msg) = await EmployeeService.ToggleHigherAuthorityAsync(emp.Id, UserSession.CurrentAreaId);
+            if (success)
+            {
+                successMessage = msg;
+                await LoadDataAsync();
+            }
+            else
+            {
+                errorMessage = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Failed to update authority status: " + ex.Message;
+        }
+    }
+
     private async Task SyncEmployeeAsync(EmployeeDto emp)
     {
         try
@@ -976,20 +1530,580 @@ else
         }
     }
 
-    private async Task ToggleStatusAsync(EmployeeDto emp)
+    // Bulk Blacklist state
+    private bool isBulkBlacklistModalOpen = false;
+    private string bulkActionReason = "Blacklisted";
+    private string bulkEmpCodesInput = string.Empty;
+    private string? bulkModalError;
+    private string? bulkModalSuccess;
+    private bool isBulkProcessing = false;
+
+    // Turnstile Gate Access Modal state
+    private bool showDeviceAccessModal = false;
+    private EmployeeDto? targetDeviceEmp;
+    private List<WorkerDeviceAccessDto> targetWorkerDevices = new();
+    private bool isLoadingDevices = false;
+    private bool isDeviceProcessing = false;
+    private string? deviceModalError;
+    private string? deviceModalSuccess;
+
+    private void OpenBulkBlacklistModal()
     {
+        bulkEmpCodesInput = string.Empty;
+        bulkActionReason = "Blacklisted";
+        bulkModalError = null;
+        bulkModalSuccess = null;
+        isBulkBlacklistModalOpen = true;
+    }
+
+    private void CloseBulkBlacklistModal()
+    {
+        isBulkBlacklistModalOpen = false;
+    }
+
+    private async Task DownloadSampleBlacklistCsvAsync()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("EmpCode,DeviceSerialNumber");
+        sb.AppendLine("ECL-7001,DEV-BIO-001");
+        sb.AppendLine("ECL-7002,DEV-BIO-002");
+        sb.AppendLine("ECL-7003,ALL");
+
+        string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
+        string fileName = "ECL_Bulk_Gate_Access_Template.csv";
+
+        await JS.InvokeVoidAsync("eval", $@"
+            var link = document.createElement('a');
+            link.download = '{fileName}';
+            link.href = 'data:text/csv;base64,{base64}';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        ");
+    }
+
+    private async Task HandleBulkBlacklistFileUpload(InputFileChangeEventArgs e)
+    {
+        bulkModalError = null;
+        bulkModalSuccess = null;
         try
         {
-            var toggled = await EmployeeService.ToggleEmployeeStatusAsync(emp.Id);
-            if (toggled)
+            var file = e.File;
+            if (file == null) return;
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            var content = await reader.ReadToEndAsync();
+
+            var rawLines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(l => l.Trim())
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .ToList();
+
+            if (!rawLines.Any())
             {
-                successMessage = $"Worker {emp.EmpCode} status updated.";
+                bulkModalError = "Uploaded file is empty.";
+                return;
+            }
+
+            int codeColIndex = 0;
+            int serialColIndex = -1;
+            int startIndex = 0;
+
+            // Check if first line contains header columns
+            string firstLine = rawLines[0];
+            var headerCols = firstLine.Split(new[] { ',', '\t', ';' }).Select(c => c.Trim().ToLowerInvariant()).ToList();
+            if (headerCols.Any(c => c.Contains("code") || c.Contains("emp") || c.Contains("id")))
+            {
+                startIndex = 1;
+                for (int i = 0; i < headerCols.Count; i++)
+                {
+                    if (headerCols[i].Contains("code") || headerCols[i].Contains("emp") || headerCols[i].Contains("id"))
+                    {
+                        codeColIndex = i;
+                    }
+                    else if (headerCols[i].Contains("serial") || headerCols[i].Contains("device") || headerCols[i].Contains("gate") || headerCols[i].Contains("machine"))
+                    {
+                        serialColIndex = i;
+                    }
+                }
+            }
+
+            var extractedPairs = new List<string>();
+            for (int i = startIndex; i < rawLines.Count; i++)
+            {
+                var cols = rawLines[i].Split(new[] { ',', '\t', ';' }).Select(c => c.Trim().Trim('"', '\'')).ToList();
+                string code = cols.Count > codeColIndex ? cols[codeColIndex] : "";
+                string serial = "";
+                if (serialColIndex >= 0 && cols.Count > serialColIndex)
+                {
+                    serial = cols[serialColIndex];
+                }
+                else if (cols.Count > 1 && codeColIndex == 0)
+                {
+                    serial = cols[1];
+                }
+
+                if (!string.IsNullOrWhiteSpace(code))
+                {
+                    if (!string.IsNullOrWhiteSpace(serial))
+                    {
+                        extractedPairs.Add($"{code}, {serial}");
+                    }
+                    else
+                    {
+                        extractedPairs.Add($"{code}, ALL");
+                    }
+                }
+            }
+
+            var finalPairs = extractedPairs.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (!finalPairs.Any())
+            {
+                bulkModalError = "No valid records found in the uploaded file.";
+                return;
+            }
+
+            bulkEmpCodesInput = string.Join("\n", finalPairs);
+            bulkModalSuccess = $"Successfully loaded {finalPairs.Count} record(s) from {file.Name}.";
+        }
+        catch (Exception ex)
+        {
+            bulkModalError = "Failed to parse file: " + ex.Message;
+        }
+    }
+
+    private async Task ExecuteBulkBlacklistAsync()
+    {
+        bulkModalError = null;
+        bulkModalSuccess = null;
+
+        var rawLines = bulkEmpCodesInput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.Trim())
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+
+        var entries = new List<BulkBlockEntryDto>();
+
+        foreach (var line in rawLines)
+        {
+            var parts = line.Split(new[] { ',', '\t', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(p => p.Trim())
+                .ToList();
+
+            if (parts.Count >= 2)
+            {
+                entries.Add(new BulkBlockEntryDto(parts[0], parts[1]));
+            }
+            else if (parts.Count == 1)
+            {
+                var spaceParts = parts[0].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (spaceParts.Length >= 2)
+                {
+                    entries.Add(new BulkBlockEntryDto(spaceParts[0], spaceParts[1]));
+                }
+                else
+                {
+                    entries.Add(new BulkBlockEntryDto(parts[0], "ALL"));
+                }
+            }
+        }
+
+        if (!entries.Any())
+        {
+            bulkModalError = "Please enter or upload at least one valid Employee Code.";
+            return;
+        }
+
+        isBulkProcessing = true;
+        try
+        {
+            var (successCount, totalCount, msg) = await EmployeeService.BulkBlacklistEmployeesAsync(
+                entries,
+                bulkActionReason,
+                UserSession.CurrentAreaId,
+                UserSession.CurrentSubAreaId
+            );
+
+            if (successCount > 0)
+            {
+                successMessage = msg;
+                await LoadDataAsync();
+                CloseBulkBlacklistModal();
+            }
+            else
+            {
+                bulkModalError = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            bulkModalError = "Bulk action error: " + ex.Message;
+        }
+        finally
+        {
+            isBulkProcessing = false;
+        }
+    }
+
+    // Bulk Employee Import State
+    private bool isBulkEmployeeModalOpen = false;
+    private bool isBulkEmployeeSaving = false;
+    private string bulkEmployeeCsvText = string.Empty;
+    private string? bulkEmpModalError;
+    private string? bulkEmpModalSuccess;
+
+    private void OpenBulkEmployeeModal()
+    {
+        bulkEmployeeCsvText = string.Empty;
+        bulkEmpModalError = null;
+        bulkEmpModalSuccess = null;
+        isBulkEmployeeModalOpen = true;
+    }
+
+    private void CloseBulkEmployeeModal()
+    {
+        isBulkEmployeeModalOpen = false;
+        bulkEmpModalError = null;
+        bulkEmpModalSuccess = null;
+    }
+
+    private async Task DownloadSampleEmployeesCsvAsync()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority");
+        sb.AppendLine("ECL-8001,Rajesh Kumar,Mining Sirdar,Sodepur Colliery,No");
+        sb.AppendLine("ECL-8002,Sunil Mondal,Overman,Chinukuri Pit 1,No");
+        sb.AppendLine("ECL-8003,Amit Banerjee,Area General Manager,Sodepur Colliery,Yes");
+        sb.AppendLine("ECL-8004,Pradeep Soren,Colliery Worker,Dhemomain Colliery,No");
+
+        string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
+        string fileName = "sample_bulk_employees.csv";
+
+        await JS.InvokeVoidAsync("eval", $@"
+            var link = document.createElement('a');
+            link.download = '{fileName}';
+            link.href = 'data:text/csv;base64,{base64}';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        ");
+    }
+
+    private void FillSampleEmployeeData()
+    {
+        bulkEmployeeCsvText = "EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority\nECL-8001,Rajesh Kumar,Mining Sirdar,Sodepur Colliery,No\nECL-8002,Sunil Mondal,Overman,Chinukuri Pit 1,No\nECL-8003,Amit Banerjee,Area General Manager,Sodepur Colliery,Yes\nECL-8004,Pradeep Soren,Colliery Worker,Dhemomain Colliery,No";
+    }
+
+    private async Task HandleBulkEmployeeFileUpload(InputFileChangeEventArgs e)
+    {
+        bulkEmpModalError = null;
+        bulkEmpModalSuccess = null;
+
+        try
+        {
+            var file = e.File;
+            if (file == null) return;
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            bulkEmployeeCsvText = await reader.ReadToEndAsync();
+            bulkEmpModalSuccess = $"File '{file.Name}' loaded into editor below. Review and click 'Import & Onboard'.";
+        }
+        catch (Exception ex)
+        {
+            bulkEmpModalError = "Failed to read file: " + ex.Message;
+        }
+    }
+
+    private async Task ExecuteBulkEmployeeUploadAsync()
+    {
+        if (string.IsNullOrWhiteSpace(bulkEmployeeCsvText))
+        {
+            bulkEmpModalError = "Please select a file or paste CSV data.";
+            return;
+        }
+
+        isBulkEmployeeSaving = true;
+        bulkEmpModalError = null;
+        bulkEmpModalSuccess = null;
+
+        try
+        {
+            var lines = bulkEmployeeCsvText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var entries = new List<BulkEmployeeEntryDto>();
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].Trim();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                var parts = line.Split(new[] { ',', '\t', ';' });
+                if (parts.Length < 2) continue;
+
+                string code = parts[0].Trim();
+                if (code.Equals("EmpCode", StringComparison.OrdinalIgnoreCase) || code.Equals("Worker", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue; // Skip header
+                }
+
+                string name = parts.Length > 1 ? parts[1].Trim() : code;
+                string desig = parts.Length > 2 && !string.IsNullOrWhiteSpace(parts[2]) ? parts[2].Trim() : "Colliery Worker";
+                string unit = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+                bool isAuth = parts.Length > 4 && (parts[4].Trim().Equals("Yes", StringComparison.OrdinalIgnoreCase) || parts[4].Trim().Equals("True", StringComparison.OrdinalIgnoreCase));
+
+                entries.Add(new BulkEmployeeEntryDto(code, name, desig, unit, isAuth));
+            }
+
+            if (entries.Count == 0)
+            {
+                bulkEmpModalError = "No valid employee records found.";
+                return;
+            }
+
+            var (successCount, totalCount, errors) = await EmployeeService.BulkCreateEmployeesAsync(entries, UserSession.CurrentSubAreaId);
+            if (errors.Count == 0)
+            {
+                successMessage = $"Successfully onboarded/updated {successCount} worker(s). Past punches automatically linked!";
+                CloseBulkEmployeeModal();
+                await LoadDataAsync();
+            }
+            else
+            {
+                bulkEmpModalSuccess = $"Onboarded {successCount} of {totalCount} worker(s).";
+                bulkEmpModalError = $"{errors.Count} error(s): " + string.Join(" | ", errors.Take(3));
                 await LoadDataAsync();
             }
         }
         catch (Exception ex)
         {
-            errorMessage = $"Failed to update worker status: {ex.Message}";
+            bulkEmpModalError = "Bulk onboard error: " + ex.Message;
+        }
+        finally
+        {
+            isBulkEmployeeSaving = false;
+        }
+    }
+
+    private async Task OpenDeviceAccessModal(EmployeeDto emp)
+    {
+        targetDeviceEmp = emp;
+        showDeviceAccessModal = true;
+        isLoadingDevices = true;
+        deviceModalError = null;
+        deviceModalSuccess = null;
+        try
+        {
+            targetWorkerDevices = await EmployeeService.GetWorkerDevicesAsync(emp.Id);
+        }
+        catch (Exception ex)
+        {
+            deviceModalError = "Failed to load worker turnstiles: " + ex.Message;
+        }
+        finally
+        {
+            isLoadingDevices = false;
+        }
+    }
+
+    private void CloseDeviceAccessModal()
+    {
+        showDeviceAccessModal = false;
+        targetDeviceEmp = null;
+        targetWorkerDevices.Clear();
+        deviceModalError = null;
+        deviceModalSuccess = null;
+    }
+
+    private async Task ToggleDeviceAccessAsync(string serialNumber, bool block)
+    {
+        if (targetDeviceEmp == null) return;
+        isDeviceProcessing = true;
+        deviceModalError = null;
+        deviceModalSuccess = null;
+        try
+        {
+            var (success, msg) = await EmployeeService.ToggleWorkerDeviceAccessAsync(targetDeviceEmp.Id, serialNumber, block);
+            if (success)
+            {
+                deviceModalSuccess = msg;
+                targetWorkerDevices = await EmployeeService.GetWorkerDevicesAsync(targetDeviceEmp.Id);
+                await LoadDataAsync();
+                targetDeviceEmp = employees.FirstOrDefault(e => e.Id == targetDeviceEmp.Id) ?? targetDeviceEmp;
+            }
+            else
+            {
+                deviceModalError = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            deviceModalError = "Error updating turnstile access: " + ex.Message;
+        }
+        finally
+        {
+            isDeviceProcessing = false;
+        }
+    }
+
+    private async Task BlockAllMachinesForTargetAsync()
+    {
+        if (targetDeviceEmp == null) return;
+        isDeviceProcessing = true;
+        deviceModalError = null;
+        deviceModalSuccess = null;
+        try
+        {
+            var (success, msg) = await EmployeeService.BlockAllDevicesForWorkerAsync(targetDeviceEmp.Id, true);
+            if (success)
+            {
+                deviceModalSuccess = msg;
+                targetWorkerDevices = await EmployeeService.GetWorkerDevicesAsync(targetDeviceEmp.Id);
+                await LoadDataAsync();
+                targetDeviceEmp = employees.FirstOrDefault(e => e.Id == targetDeviceEmp.Id) ?? targetDeviceEmp;
+            }
+            else
+            {
+                deviceModalError = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            deviceModalError = "Error blocking turnstiles: " + ex.Message;
+        }
+        finally
+        {
+            isDeviceProcessing = false;
+        }
+    }
+
+    private async Task UnblockAllMachinesForTargetAsync()
+    {
+        if (targetDeviceEmp == null) return;
+        isDeviceProcessing = true;
+        deviceModalError = null;
+        deviceModalSuccess = null;
+        try
+        {
+            var (success, msg) = await EmployeeService.BlockAllDevicesForWorkerAsync(targetDeviceEmp.Id, false);
+            if (success)
+            {
+                deviceModalSuccess = msg;
+                targetWorkerDevices = await EmployeeService.GetWorkerDevicesAsync(targetDeviceEmp.Id);
+                await LoadDataAsync();
+                targetDeviceEmp = employees.FirstOrDefault(e => e.Id == targetDeviceEmp.Id) ?? targetDeviceEmp;
+            }
+            else
+            {
+                deviceModalError = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            deviceModalError = "Error allowing turnstiles: " + ex.Message;
+        }
+        finally
+        {
+            isDeviceProcessing = false;
+        }
+    }
+
+    // Inline Designation Actions
+    private void ToggleInlineCreateAdd()
+    {
+        showInlineCreateAdd = !showInlineCreateAdd;
+        inlineCreateTitle = string.Empty;
+        inlineCreateError = null;
+    }
+
+    private async Task HandleInlineCreateKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SaveInlineCreateDesignationAsync();
+        }
+    }
+
+    private async Task SaveInlineCreateDesignationAsync()
+    {
+        inlineCreateError = null;
+        if (string.IsNullOrWhiteSpace(inlineCreateTitle))
+        {
+            inlineCreateError = "Please enter a designation title.";
+            return;
+        }
+
+        string clean = inlineCreateTitle.Trim();
+        var (success, msg) = await EmployeeService.AddDesignationAsync(clean);
+        if (success || msg.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+        {
+            availableDesignations = await EmployeeService.GetDesignationsAsync();
+            newDesignationSelection = clean;
+            showInlineCreateAdd = false;
+            inlineCreateTitle = string.Empty;
+        }
+        else
+        {
+            inlineCreateError = msg;
+        }
+    }
+
+    private void ToggleInlineEditAdd()
+    {
+        showInlineEditAdd = !showInlineEditAdd;
+        inlineEditTitle = string.Empty;
+        inlineEditError = null;
+    }
+
+    private async Task HandleInlineEditKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SaveInlineEditDesignationAsync();
+        }
+    }
+
+    private async Task SaveInlineEditDesignationAsync()
+    {
+        inlineEditError = null;
+        if (string.IsNullOrWhiteSpace(inlineEditTitle))
+        {
+            inlineEditError = "Please enter a designation title.";
+            return;
+        }
+
+        string clean = inlineEditTitle.Trim();
+        var (success, msg) = await EmployeeService.AddDesignationAsync(clean);
+        if (success || msg.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+        {
+            availableDesignations = await EmployeeService.GetDesignationsAsync();
+            editDesignationSelection = clean;
+            showInlineEditAdd = false;
+            inlineEditTitle = string.Empty;
+        }
+        else
+        {
+            inlineEditError = msg;
+        }
+    }
+
+    private async Task DeleteCurrentDesignationAsync(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return;
+
+        var (success, msg) = await EmployeeService.DeleteDesignationAsync(title);
+        if (success)
+        {
+            successMessage = msg;
+            availableDesignations = await EmployeeService.GetDesignationsAsync();
+            if (newDesignationSelection == title)
+                newDesignationSelection = availableDesignations.FirstOrDefault() ?? "Colliery Worker";
+            if (editDesignationSelection == title)
+                editDesignationSelection = availableDesignations.FirstOrDefault() ?? "Colliery Worker";
+        }
+        else
+        {
+            errorMessage = msg;
         }
     }
 }

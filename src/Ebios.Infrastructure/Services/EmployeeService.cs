@@ -95,6 +95,10 @@ public class EmployeeService : IEmployeeService
                 addIds,
                 addNames,
                 e.IsActive,
+                e.IsBlacklisted,
+                e.IsHigherAuthority,
+                e.StatusReason,
+                e.BlockedDeviceSerials,
                 e.IsSyncedToEbios,
                 e.LastSyncedAt,
                 e.CreatedAt
@@ -130,6 +134,10 @@ public class EmployeeService : IEmployeeService
             addIds,
             addNames,
             e.IsActive,
+            e.IsBlacklisted,
+            e.IsHigherAuthority,
+            e.StatusReason,
+            e.BlockedDeviceSerials,
             e.IsSyncedToEbios,
             e.LastSyncedAt,
             e.CreatedAt
@@ -157,9 +165,10 @@ public class EmployeeService : IEmployeeService
         {
             EmpCode = normalizedCode,
             FullName = dto.FullName.Trim(),
-            Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "General Mazdoor" : dto.Designation.Trim(),
+            Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "Colliery Worker" : dto.Designation.Trim(),
             SubAreaId = dto.SubAreaId,
             AdditionalSubAreaIds = additionalCsv,
+            IsHigherAuthority = dto.IsHigherAuthority,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
@@ -253,6 +262,10 @@ public class EmployeeService : IEmployeeService
             additionalIds,
             addNames,
             employee.IsActive,
+            employee.IsBlacklisted,
+            employee.IsHigherAuthority,
+            employee.StatusReason,
+            employee.BlockedDeviceSerials,
             employee.IsSyncedToEbios,
             employee.LastSyncedAt,
             employee.CreatedAt
@@ -296,8 +309,9 @@ public class EmployeeService : IEmployeeService
         var additionalIds = dto.AdditionalSubAreaIds?.Where(subId => subId != dto.SubAreaId).Distinct().ToList() ?? new List<int>();
 
         employee.FullName = dto.FullName.Trim();
-        employee.Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "General Mazdoor" : dto.Designation.Trim();
+        employee.Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "Colliery Worker" : dto.Designation.Trim();
         employee.SubAreaId = dto.SubAreaId;
+        employee.IsHigherAuthority = dto.IsHigherAuthority;
         employee.AdditionalSubAreaIds = additionalIds.Any() ? string.Join(",", additionalIds) : null;
 
         await _context.SaveChangesAsync();
@@ -337,15 +351,344 @@ public class EmployeeService : IEmployeeService
         }
     }
 
-    public async Task<bool> ToggleEmployeeStatusAsync(int id)
+    public async Task<List<WorkerDeviceAccessDto>> GetWorkerDevicesAsync(int employeeId)
+    {
+        var employee = await _context.Employees.FindAsync(employeeId);
+        if (employee == null) return new List<WorkerDeviceAccessDto>();
+
+        var targetSubAreaIds = new List<int> { employee.SubAreaId };
+        if (!string.IsNullOrWhiteSpace(employee.AdditionalSubAreaIds))
+        {
+            var addIds = employee.AdditionalSubAreaIds
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => int.TryParse(s.Trim(), out var parsed) ? parsed : 0)
+                .Where(id => id > 0);
+            targetSubAreaIds.AddRange(addIds);
+        }
+
+        var blockedSerials = (employee.BlockedDeviceSerials ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim().ToUpperInvariant())
+            .ToHashSet();
+
+        var devices = await _context.Devices
+            .Include(d => d.SubArea)
+            .Where(d => targetSubAreaIds.Contains(d.SubAreaId))
+            .OrderBy(d => d.DeviceName)
+            .ToListAsync();
+
+        return devices.Select(d => new WorkerDeviceAccessDto(
+            d.Id,
+            d.SerialNumber,
+            d.DeviceName,
+            d.SubArea?.SubAreaName ?? "Colliery Unit",
+            d.Direction,
+            blockedSerials.Contains(d.SerialNumber.ToUpperInvariant()) || !employee.IsActive
+        )).ToList();
+    }
+
+    public async Task<(bool success, string message)> ToggleWorkerDeviceAccessAsync(int employeeId, string deviceSerialNumber, bool block)
+    {
+        var employee = await _context.Employees.FindAsync(employeeId);
+        if (employee == null) return (false, "Employee not found.");
+
+        string serial = deviceSerialNumber.Trim().ToUpperInvariant();
+
+        // 1. Send hardware SOAP command to the physical turnstile
+        var (soapSuccess, soapMsg) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(
+            deviceSerialNumber,
+            employee.EmpCode,
+            blockUser: block
+        );
+
+        // 2. Update employee's BlockedDeviceSerials set
+        var blockedSet = (employee.BlockedDeviceSerials ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim().ToUpperInvariant())
+            .ToHashSet();
+
+        if (block)
+        {
+            blockedSet.Add(serial);
+        }
+        else
+        {
+            blockedSet.Remove(serial);
+        }
+
+        employee.BlockedDeviceSerials = blockedSet.Any() ? string.Join(",", blockedSet) : null;
+
+        // Check if all devices are blocked
+        var allDevices = await GetWorkerDevicesAsync(employeeId);
+        int totalDevs = allDevices.Count;
+        int blockedCount = blockedSet.Count;
+
+        if (totalDevs > 0 && blockedCount >= totalDevs)
+        {
+            employee.IsActive = false;
+        }
+        else
+        {
+            employee.IsActive = true;
+        }
+
+        await _context.SaveChangesAsync();
+
+        string action = block ? "Blocked" : "Unblocked";
+        string msg = soapSuccess
+            ? $"Turnstile {deviceSerialNumber} {action} for {employee.FullName} ({employee.EmpCode})."
+            : $"Turnstile record updated, but biometric server returned: {soapMsg}";
+
+        return (true, msg);
+    }
+
+    public async Task<(bool success, string message)> BlockAllDevicesForWorkerAsync(int employeeId, bool blockAll)
+    {
+        var employee = await _context.Employees.FindAsync(employeeId);
+        if (employee == null) return (false, "Employee not found.");
+
+        var devices = await GetWorkerDevicesAsync(employeeId);
+        if (!devices.Any())
+        {
+            employee.IsActive = !blockAll;
+            employee.BlockedDeviceSerials = null;
+            await _context.SaveChangesAsync();
+            return (true, $"Worker status updated. (No active biometric turnstiles registered in this worker's unit).");
+        }
+
+        int successCount = 0;
+        foreach (var dev in devices)
+        {
+            try
+            {
+                var (success, _) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(
+                    dev.SerialNumber,
+                    employee.EmpCode,
+                    blockUser: blockAll
+                );
+                if (success) successCount++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send block/unblock command to {Serial} for {Code}", dev.SerialNumber, employee.EmpCode);
+            }
+        }
+
+        if (blockAll)
+        {
+            employee.IsActive = false;
+            employee.BlockedDeviceSerials = string.Join(",", devices.Select(d => d.SerialNumber));
+        }
+        else
+        {
+            employee.IsActive = true;
+            employee.BlockedDeviceSerials = null;
+        }
+
+        await _context.SaveChangesAsync();
+
+        string action = blockAll ? "Blocked" : "Unblocked";
+        return (true, $"{action} worker '{employee.FullName}' across all {devices.Count} turnstiles ({successCount}/{devices.Count} device commands executed).");
+    }
+
+    public async Task<(bool success, string message)> ToggleEmployeeStatusAsync(int id, string? reason = null, bool isBlacklist = false)
     {
         var employee = await _context.Employees.FindAsync(id);
-        if (employee == null) return false;
+        if (employee == null) return (false, "Employee not found.");
 
-        employee.IsActive = !employee.IsActive;
+        bool targetBlock = employee.IsActive; // If currently active, we want to block on all devices
+        return await BlockAllDevicesForWorkerAsync(id, targetBlock);
+    }
+
+    public async Task<(bool success, string message)> ToggleHigherAuthorityAsync(int employeeId, int? requestingUserAreaId = null)
+    {
+        var employee = await _context.Employees
+            .Include(e => e.SubArea)
+            .FirstOrDefaultAsync(e => e.Id == employeeId);
+
+        if (employee == null) return (false, "Employee not found.");
+
+        // Area Personnel Manager jurisdiction check
+        if (requestingUserAreaId.HasValue && requestingUserAreaId.Value > 0)
+        {
+            if (employee.SubArea == null || employee.SubArea.AreaId != requestingUserAreaId.Value)
+            {
+                return (false, "Permission denied. You can only map Higher Authorities in your own assigned Mining Area.");
+            }
+        }
+
+        employee.IsHigherAuthority = !employee.IsHigherAuthority;
         await _context.SaveChangesAsync();
-        _logger.LogInformation("Toggled active status for Employee {Code} to {Status}", employee.EmpCode, employee.IsActive);
-        return true;
+
+        string role = employee.IsHigherAuthority ? "Higher Authority / Executive" : "General Colliery Personnel";
+        _logger.LogInformation("Updated employee {Code} authority status to: {Status}", employee.EmpCode, role);
+
+        return (true, $"{employee.FullName} ({employee.EmpCode}) is now mapped as {role}.");
+    }
+
+    public async Task<(int successCount, int totalCount, string message)> BulkBlacklistEmployeesAsync(
+        List<BulkBlockEntryDto> entries, string reason, int? requestingUserAreaId = null, int? requestingUserSubAreaId = null)
+    {
+        if (entries == null || !entries.Any())
+        {
+            return (0, 0, "No employee codes provided.");
+        }
+
+        // Clean & group entries by normalized EmpCode
+        var validEntries = entries
+            .Where(e => !string.IsNullOrWhiteSpace(e.EmpCode))
+            .Select(e => new BulkBlockEntryDto(
+                e.EmpCode.Trim().ToUpperInvariant(), 
+                string.IsNullOrWhiteSpace(e.DeviceSerialNumber) ? null : e.DeviceSerialNumber.Trim().ToUpperInvariant()
+            ))
+            .ToList();
+
+        if (!validEntries.Any())
+        {
+            return (0, 0, "No valid employee codes found in input.");
+        }
+
+        var normalizedCodes = validEntries.Select(e => e.EmpCode).Distinct().ToList();
+
+        var query = _context.Employees
+            .Include(e => e.SubArea)
+            .Where(e => normalizedCodes.Contains(e.EmpCode.ToUpper()));
+
+        // Role-based jurisdictional check
+        if (requestingUserSubAreaId.HasValue && requestingUserSubAreaId.Value > 0)
+        {
+            query = query.Where(e => e.SubAreaId == requestingUserSubAreaId.Value);
+        }
+        else if (requestingUserAreaId.HasValue && requestingUserAreaId.Value > 0)
+        {
+            query = query.Where(e => e.SubArea != null && e.SubArea.AreaId == requestingUserAreaId.Value);
+        }
+
+        var matchingEmployees = await query.ToListAsync();
+        if (!matchingEmployees.Any())
+        {
+            return (0, 0, "No matching employees found within your permitted jurisdiction.");
+        }
+
+        bool isBlacklist = reason.Contains("Blacklist", StringComparison.OrdinalIgnoreCase);
+
+        // Map subarea IDs to fetch all associated devices
+        var allSubAreaIds = new HashSet<int>();
+        foreach (var emp in matchingEmployees)
+        {
+            allSubAreaIds.Add(emp.SubAreaId);
+            if (!string.IsNullOrWhiteSpace(emp.AdditionalSubAreaIds))
+            {
+                var addIds = emp.AdditionalSubAreaIds
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => int.TryParse(s.Trim(), out var parsed) ? parsed : 0)
+                    .Where(subId => subId > 0);
+                foreach (var id in addIds) allSubAreaIds.Add(id);
+            }
+        }
+
+        // Get devices for these subareas
+        var devices = await _context.Devices
+            .Where(d => allSubAreaIds.Contains(d.SubAreaId))
+            .ToListAsync();
+
+        var deviceLookup = devices.GroupBy(d => d.SubAreaId).ToDictionary(g => g.Key, g => g.ToList());
+
+        // Group requested serials per employee
+        var serialsByEmp = validEntries
+            .GroupBy(e => e.EmpCode)
+            .ToDictionary(
+                g => g.Key, 
+                g => g.Where(x => !string.IsNullOrWhiteSpace(x.DeviceSerialNumber))
+                      .Select(x => x.DeviceSerialNumber!)
+                      .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            );
+
+        int hardwareDispatchedCount = 0;
+
+        foreach (var emp in matchingEmployees)
+        {
+            string empCodeUpper = emp.EmpCode.ToUpperInvariant();
+
+            var empSubAreaIds = new List<int> { emp.SubAreaId };
+            if (!string.IsNullOrWhiteSpace(emp.AdditionalSubAreaIds))
+            {
+                empSubAreaIds.AddRange(emp.AdditionalSubAreaIds
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => int.TryParse(s.Trim(), out var parsed) ? parsed : 0)
+                    .Where(id => id > 0));
+            }
+
+            var empAllDevices = empSubAreaIds
+                .Where(id => deviceLookup.ContainsKey(id))
+                .SelectMany(id => deviceLookup[id])
+                .DistinctBy(d => d.SerialNumber.ToUpperInvariant())
+                .ToList();
+
+            var requestedSerials = serialsByEmp.ContainsKey(empCodeUpper) ? serialsByEmp[empCodeUpper] : new HashSet<string>();
+            bool blockAll = requestedSerials.Count == 0 || requestedSerials.Contains("ALL");
+
+            List<Device> devicesToBlock;
+            if (blockAll)
+            {
+                devicesToBlock = empAllDevices;
+                emp.IsActive = false;
+                emp.IsBlacklisted = isBlacklist;
+                emp.StatusReason = reason;
+                emp.BlockedDeviceSerials = empAllDevices.Any() ? string.Join(",", empAllDevices.Select(d => d.SerialNumber)) : null;
+            }
+            else
+            {
+                // Specific turnstile serials
+                devicesToBlock = empAllDevices
+                    .Where(d => requestedSerials.Contains(d.SerialNumber.ToUpperInvariant()))
+                    .ToList();
+
+                var currentBlocked = (emp.BlockedDeviceSerials ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim().ToUpperInvariant())
+                    .ToHashSet();
+
+                foreach (var s in requestedSerials)
+                {
+                    currentBlocked.Add(s);
+                }
+
+                emp.BlockedDeviceSerials = currentBlocked.Any() ? string.Join(",", currentBlocked) : null;
+                emp.StatusReason = reason;
+                emp.IsBlacklisted = isBlacklist;
+                if (empAllDevices.Any() && currentBlocked.Count >= empAllDevices.Count)
+                {
+                    emp.IsActive = false;
+                }
+                else
+                {
+                    emp.IsActive = true;
+                }
+            }
+
+            foreach (var dev in devicesToBlock)
+            {
+                try
+                {
+                    var (success, _) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(
+                        dev.SerialNumber,
+                        emp.EmpCode,
+                        blockUser: true
+                    );
+                    if (success) hardwareDispatchedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Bulk block failed for {Code} on device {Serial}", emp.EmpCode, dev.SerialNumber);
+                }
+            }
+        }
+
+        await _context.SaveChangesAsync();
+
+        string msg = $"Successfully processed {matchingEmployees.Count} employee(s) across target turnstiles ({hardwareDispatchedCount} hardware lock commands dispatched).";
+        return (matchingEmployees.Count, matchingEmployees.Count, msg);
     }
 
     public async Task<bool> SyncEmployeeAsync(int id)
@@ -381,5 +724,237 @@ public class EmployeeService : IEmployeeService
             _logger.LogError(ex, "Exception while re-syncing employee {Code}", employee.EmpCode);
             return false;
         }
+    }
+
+    public async Task<List<string>> GetDesignationsAsync()
+    {
+        var dbDesignations = await _context.DesignationMasters
+            .AsNoTracking()
+            .Where(d => d.IsActive)
+            .OrderBy(d => d.Title)
+            .Select(d => d.Title)
+            .ToListAsync();
+
+        if (dbDesignations.Any()) return dbDesignations;
+
+        var fallback = await _context.Employees
+            .AsNoTracking()
+            .Select(e => e.Designation)
+            .Distinct()
+            .OrderBy(d => d)
+            .ToListAsync();
+
+        return fallback.Any() ? fallback : new List<string> { "Colliery Worker", "Mining Personnel", "Mining Sirdar" };
+    }
+
+    public async Task<(bool success, string message)> AddDesignationAsync(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return (false, "Designation title cannot be empty.");
+
+        string cleanTitle = title.Trim();
+        var existing = await _context.DesignationMasters.FirstOrDefaultAsync(d => d.Title.ToUpper() == cleanTitle.ToUpper());
+        if (existing != null)
+        {
+            if (!existing.IsActive)
+            {
+                existing.IsActive = true;
+                await _context.SaveChangesAsync();
+                return (true, $"Designation '{cleanTitle}' reactivated successfully.");
+            }
+            return (false, $"Designation '{cleanTitle}' already exists.");
+        }
+
+        _context.DesignationMasters.Add(new DesignationMaster
+        {
+            Title = cleanTitle,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        });
+        await _context.SaveChangesAsync();
+        return (true, $"Designation '{cleanTitle}' added successfully.");
+    }
+
+    public async Task<(bool success, string message)> UpdateDesignationAsync(string oldTitle, string newTitle)
+    {
+        if (string.IsNullOrWhiteSpace(oldTitle) || string.IsNullOrWhiteSpace(newTitle))
+            return (false, "Designation titles cannot be empty.");
+
+        string cleanOld = oldTitle.Trim();
+        string cleanNew = newTitle.Trim();
+
+        var existing = await _context.DesignationMasters.FirstOrDefaultAsync(d => d.Title.ToUpper() == cleanOld.ToUpper());
+        if (existing != null)
+        {
+            existing.Title = cleanNew;
+        }
+        else
+        {
+            _context.DesignationMasters.Add(new DesignationMaster { Title = cleanNew, IsActive = true });
+        }
+
+        var affectedEmployees = await _context.Employees
+            .Where(e => e.Designation.ToUpper() == cleanOld.ToUpper())
+            .ToListAsync();
+
+        foreach (var emp in affectedEmployees)
+        {
+            emp.Designation = cleanNew;
+        }
+
+        await _context.SaveChangesAsync();
+        return (true, $"Designation updated to '{cleanNew}'. Updated {affectedEmployees.Count} worker record(s).");
+    }
+
+    public async Task<(bool success, string message)> DeleteDesignationAsync(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return (false, "Designation title cannot be empty.");
+
+        string cleanTitle = title.Trim();
+        var existing = await _context.DesignationMasters.FirstOrDefaultAsync(d => d.Title.ToUpper() == cleanTitle.ToUpper());
+        if (existing == null)
+            return (false, "Designation not found.");
+
+        int activeWorkersWithDesignation = await _context.Employees.CountAsync(e => e.Designation.ToUpper() == cleanTitle.ToUpper() && e.IsActive);
+        if (activeWorkersWithDesignation > 0)
+        {
+            return (false, $"Cannot delete '{cleanTitle}' because {activeWorkersWithDesignation} active worker(s) are currently assigned to it. Reassign them first or edit the designation.");
+        }
+
+        _context.DesignationMasters.Remove(existing);
+        await _context.SaveChangesAsync();
+        return (true, $"Designation '{cleanTitle}' deleted successfully.");
+    }
+
+    public async Task<(int successCount, int totalCount, List<string> errors)> BulkCreateEmployeesAsync(List<BulkEmployeeEntryDto> entries, int? defaultSubAreaId = null)
+    {
+        int successCount = 0;
+        var errors = new List<string>();
+
+        var subAreas = await _context.SubAreas.AsNoTracking().ToListAsync();
+        var existingEmployees = await _context.Employees.Select(e => e.EmpCode.ToUpper()).ToListAsync();
+        var existingCodes = new HashSet<string>(existingEmployees);
+
+        foreach (var entry in entries)
+        {
+            try
+            {
+                string code = entry.EmpCode.Trim().ToUpper();
+                if (string.IsNullOrWhiteSpace(code))
+                {
+                    continue;
+                }
+
+                if (existingCodes.Contains(code))
+                {
+                    var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToUpper() == code);
+                    if (emp != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(entry.FullName)) emp.FullName = entry.FullName.Trim();
+                        if (!string.IsNullOrWhiteSpace(entry.Designation)) emp.Designation = entry.Designation.Trim();
+                        if (entry.IsHigherAuthority) emp.IsHigherAuthority = true;
+                        successCount++;
+                    }
+                    continue;
+                }
+
+                int resolvedSubAreaId = 0;
+                if (!string.IsNullOrWhiteSpace(entry.CollieryNameOrId))
+                {
+                    string target = entry.CollieryNameOrId.Trim();
+                    if (int.TryParse(target, out int id) && subAreas.Any(s => s.Id == id))
+                    {
+                        resolvedSubAreaId = id;
+                    }
+                    else
+                    {
+                        var match = subAreas.FirstOrDefault(s => s.SubAreaName.Equals(target, StringComparison.OrdinalIgnoreCase) ||
+                                                                s.SubAreaCode.Equals(target, StringComparison.OrdinalIgnoreCase));
+                        if (match != null) resolvedSubAreaId = match.Id;
+                    }
+                }
+
+                if (resolvedSubAreaId == 0 && defaultSubAreaId.HasValue && defaultSubAreaId.Value > 0)
+                {
+                    resolvedSubAreaId = defaultSubAreaId.Value;
+                }
+
+                if (resolvedSubAreaId == 0)
+                {
+                    resolvedSubAreaId = subAreas.FirstOrDefault()?.Id ?? 1;
+                }
+
+                var newEmp = new Employee
+                {
+                    EmpCode = code,
+                    FullName = !string.IsNullOrWhiteSpace(entry.FullName) ? entry.FullName.Trim() : code,
+                    Designation = !string.IsNullOrWhiteSpace(entry.Designation) ? entry.Designation.Trim() : "Colliery Worker",
+                    SubAreaId = resolvedSubAreaId,
+                    IsHigherAuthority = entry.IsHigherAuthority,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _context.Employees.Add(newEmp);
+                existingCodes.Add(code);
+                successCount++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Error on {entry.EmpCode}: {ex.Message}");
+            }
+        }
+
+        if (successCount > 0)
+        {
+            await _context.SaveChangesAsync();
+
+            try
+            {
+                var createdCodes = entries.Select(e => e.EmpCode.Trim().ToUpper()).ToList();
+                var emps = await _context.Employees.Where(e => createdCodes.Contains(e.EmpCode.ToUpper())).ToListAsync();
+                var empMap = emps.ToDictionary(e => e.EmpCode.ToUpper(), e => e);
+
+                var pastPunches = await _context.AttendanceLogs
+                    .Where(l => createdCodes.Contains(l.EmpCode.ToUpper()) && (l.EmployeeId == null || l.IsFlagged))
+                    .ToListAsync();
+
+                foreach (var p in pastPunches)
+                {
+                    if (empMap.TryGetValue(p.EmpCode.ToUpper(), out var employee))
+                    {
+                        p.EmployeeId = employee.Id;
+                        p.Status = "Verified";
+                        p.IsFlagged = false;
+                    }
+                }
+
+                var pastSummaries = await _context.AttendanceDailySummaries
+                    .Where(s => createdCodes.Contains(s.EmpCode.ToUpper()) && (s.EmployeeId == null || s.IsFlagged))
+                    .ToListAsync();
+
+                foreach (var s in pastSummaries)
+                {
+                    if (empMap.TryGetValue(s.EmpCode.ToUpper(), out var employee))
+                    {
+                        s.EmployeeId = employee.Id;
+                        s.EmployeeName = employee.FullName;
+                        s.Designation = employee.Designation;
+                        s.IsVerified = true;
+                        s.IsFlagged = false;
+                        s.IsHigherAuthority = employee.IsHigherAuthority;
+                    }
+                }
+
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Retroactive linking warning during bulk employee import: {Msg}", ex.Message);
+            }
+        }
+
+        return (successCount, entries.Count, errors);
     }
 }

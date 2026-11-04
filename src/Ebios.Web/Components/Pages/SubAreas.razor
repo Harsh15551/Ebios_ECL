@@ -2,13 +2,46 @@
 @rendermode InteractiveServer
 @inject IAreaService AreaService
 @inject IEbiosSoapService EbiosSoapService
+@inject UserSessionService UserSession
 
 <PageTitle>ECL - Sub-Areas & Colliery Units</PageTitle>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h2 class="h3 fw-bold mb-1">ECL Sub-Areas & Mining Units</h2>
-        <p class="text-muted mb-0">Collieries, pits, and workshops mapped to eBios Biometric Locations</p>
+        <div class="d-flex align-items-center gap-2">
+            <h2 class="h3 fw-bold mb-1">ECL Sub-Areas & Colliery Units</h2>
+            @if (UserSession.IsSuperAdmin)
+            {
+                <span class="badge bg-danger">HQ Scope (All Areas)</span>
+            }
+            else if (UserSession.IsAreaAdmin)
+            {
+                <span class="badge bg-primary">@(UserSession.CurrentUser?.AreaName) Area Scope</span>
+            }
+            else
+            {
+                <span class="badge bg-info text-dark">@(UserSession.CurrentUser?.SubAreaName) Unit Only</span>
+            }
+
+            @if (!CanManageCollieries)
+            {
+                <span class="badge bg-warning text-dark"><i class="bi bi-eye"></i> View-Only Access</span>
+            }
+        </div>
+        <p class="text-muted mb-0">
+            @if (UserSession.IsSuperAdmin)
+            {
+                <span>Main Administrator: You have full authority to create, edit, and reassign colliery units across all 13 Mining Areas.</span>
+            }
+            else if (UserSession.IsAreaAdmin)
+            {
+                <span>Area Personnel Manager: You have authority to add and edit colliery units and pits inside <strong>@(UserSession.CurrentUser?.AreaName)</strong>.</span>
+            }
+            else
+            {
+                <span>Unit Personnel Manager: View-only access restricted strictly to <strong>@(UserSession.CurrentUser?.SubAreaName)</strong>.</span>
+            }
+        </p>
     </div>
     <div class="d-flex gap-2">
         <button class="btn btn-outline-secondary btn-sm" @onclick="LoadDataAsync" disabled="@isLoading">
@@ -18,12 +51,21 @@
             </svg>
             Refresh
         </button>
-        <button class="btn btn-primary btn-sm" @onclick="OpenCreateModal">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
-                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-            </svg>
-            Add Colliery Unit
-        </button>
+        @if (CanManageCollieries)
+        {
+            <button class="btn btn-primary btn-sm" @onclick="OpenCreateModal">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                    <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                </svg>
+                Add Colliery Unit
+            </button>
+        }
+        else
+        {
+            <span class="badge bg-secondary align-self-center py-2 px-3">
+                <i class="bi bi-lock-fill me-1"></i> View Only
+            </span>
+        }
     </div>
 </div>
 
@@ -59,8 +101,11 @@
             </div>
 
             <div class="col-12 col-md-4">
-                <select class="form-select" @bind="selectedAreaId" @bind:after="OnFilterChangedAsync">
-                    <option value="0">All Mining Areas (@areas.Count Areas)</option>
+                <select class="form-select" @bind="selectedAreaId" @bind:after="OnFilterChangedAsync" disabled="@(UserSession.IsAreaAdmin || UserSession.IsUnitAdmin)">
+                    @if (UserSession.IsSuperAdmin)
+                    {
+                        <option value="0">All Mining Areas (@areas.Count Areas)</option>
+                    }
                     @foreach (var area in areas)
                     {
                         <option value="@area.Id">@area.AreaName (@area.AreaCode)</option>
@@ -83,7 +128,7 @@
 {
     <div class="text-center py-5">
         <div class="spinner-border text-primary" role="status"></div>
-        <p class="mt-2 text-muted">Loading Sub-Areas and synchronization states...</p>
+        <p class="mt-2 text-muted">Loading Colliery Units and synchronization states...</p>
     </div>
 }
 else
@@ -96,9 +141,9 @@ else
                         <th style="width: 140px;">Unit Code</th>
                         <th>Colliery / Unit Description</th>
                         <th>Parent Mining Area</th>
-                        <th style="width: 180px;">eBios Sync Status</th>
-                        <th style="width: 160px;">Last Synced</th>
-                        <th style="width: 140px;" class="text-end">Actions</th>
+                        <th style="width: 170px;">eBios Sync Status</th>
+                        <th style="width: 150px;">Last Synced</th>
+                        <th style="width: 160px;" class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -106,7 +151,7 @@ else
                     {
                         <tr>
                             <td colspan="6" class="text-center py-4 text-muted">
-                                No sub-areas match your current filter.
+                                No colliery units match your current filter.
                             </td>
                         </tr>
                     }
@@ -148,17 +193,15 @@ else
                                         <span class="text-muted fst-italic">Never</span>
                                     }
                                 </td>
-                                <td class="text-end">
-                                    @if (sub.IsSyncedToEbios)
+                                <td class="text-end text-nowrap">
+                                    @if (CanManageCollieries && (UserSession.IsSuperAdmin || sub.AreaId == UserSession.CurrentAreaId))
                                     {
-                                        <span class="text-muted small">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="text-success me-1" viewBox="0 0 16 16">
-                                                <path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425a.247.247 0 0 1 .02-.022Z"/>
-                                            </svg>
-                                            Active in eBios
-                                        </span>
+                                        <button class="btn btn-sm btn-outline-primary me-1" @onclick="@(() => OpenEditModal(sub))" title="Edit colliery details">
+                                            ✏️ Edit
+                                        </button>
                                     }
-                                    else
+
+                                    @if (!sub.IsSyncedToEbios && CanManageCollieries)
                                     {
                                         <button class="btn btn-sm btn-outline-danger" @onclick="@(() => SyncSingleSubAreaAsync(sub))" disabled="@syncingIds.Contains(sub.Id)">
                                             @if (syncingIds.Contains(sub.Id))
@@ -171,6 +214,12 @@ else
                                             }
                                         </button>
                                     }
+                                    else if (sub.IsSyncedToEbios)
+                                    {
+                                        <span class="text-success small ms-1" title="Synced to eBioServer">
+                                            ● Synced
+                                        </span>
+                                    }
                                 </td>
                             </tr>
                         }
@@ -181,14 +230,14 @@ else
     </div>
 }
 
-<!-- Add Sub-Area Modal -->
+<!-- Modal 1: Add Sub-Area Modal -->
 @if (showCreateModal)
 {
     <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
+            <div class="modal-content shadow">
                 <div class="modal-header">
-                    <h5 class="modal-title fw-bold">Add New Mining Sub-Area Unit</h5>
+                    <h5 class="modal-title fw-bold">Add New Colliery Unit</h5>
                     <button type="button" class="btn-close" @onclick="CloseCreateModal"></button>
                 </div>
                 <div class="modal-body">
@@ -199,23 +248,31 @@ else
 
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Parent Mining Area <span class="text-danger">*</span></label>
-                        <select class="form-select" @bind="newAreaId">
-                            <option value="0">-- Select Mining Area --</option>
-                            @foreach (var area in areas)
-                            {
-                                <option value="@area.Id">@area.AreaName (@area.AreaCode)</option>
-                            }
-                        </select>
+                        @if (UserSession.IsSuperAdmin)
+                        {
+                            <select class="form-select" @bind="newAreaId">
+                                <option value="0">-- Select Mining Area --</option>
+                                @foreach (var area in areas)
+                                {
+                                    <option value="@area.Id">@area.AreaName (@area.AreaCode)</option>
+                                }
+                            </select>
+                        }
+                        else
+                        {
+                            <input type="text" class="form-control bg-light" value="@(UserSession.CurrentUser?.AreaName)" disabled />
+                            <small class="text-muted">Automatically assigned to your Area jurisdiction.</small>
+                        }
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Sub-Area Code <span class="text-danger">*</span></label>
+                        <label class="form-label fw-semibold">Unit / Pit Code <span class="text-danger">*</span></label>
                         <input type="text" class="form-control font-monospace" placeholder="e.g. SLP-PIT1, SRI-UG1" @bind="newSubAreaCode" />
                         <small class="text-muted">Maps directly to eBios LocationCode in webservice.asmx</small>
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Sub-Area / Colliery Name <span class="text-danger">*</span></label>
+                        <label class="form-label fw-semibold">Colliery Unit Description / Name <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" placeholder="e.g. Pit No. 1 Underground Colliery" @bind="newSubAreaName" />
                     </div>
 
@@ -242,6 +299,79 @@ else
     </div>
 }
 
+<!-- Modal 2: Edit Colliery Unit Modal -->
+@if (showEditModal && editingSubArea != null)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">Edit Colliery Unit Details</h5>
+                        <small class="text-muted">Unit: <strong>@editingSubArea.SubAreaName</strong> (@editingSubArea.SubAreaCode)</small>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseEditModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(editModalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@editModalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Parent Mining Area <span class="text-danger">*</span></label>
+                        @if (UserSession.IsSuperAdmin)
+                        {
+                            <select class="form-select" @bind="editAreaId">
+                                @foreach (var area in areas)
+                                {
+                                    <option value="@area.Id">@area.AreaName (@area.AreaCode)</option>
+                                }
+                            </select>
+                            <small class="text-muted">SuperAdmin can reassign the unit to another Mining Area if transferred.</small>
+                        }
+                        else
+                        {
+                            <input type="text" class="form-control bg-light" value="@editingSubArea.AreaName" disabled />
+                            <small class="text-muted">Locked to your Area jurisdiction: @(UserSession.CurrentUser?.AreaName).</small>
+                        }
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Unit Code</label>
+                        <input type="text" class="form-control font-monospace bg-light" value="@editingSubArea.SubAreaCode" disabled />
+                        <small class="text-muted">eBios LocationCode cannot be changed once registered on biometric hardware.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Colliery Unit Description / Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Pit No. 1 Underground Colliery" @bind="editSubAreaName" />
+                        <small class="text-muted">Displays across Daily Attendance Reports, biometric turnstile assignments, and rosters.</small>
+                    </div>
+
+                    <div class="alert alert-info py-2 small mb-0">
+                        <strong>eBios Synchronization:</strong> Saving changes will automatically update PostgreSQL and push the updated location description to eBioServer via SOAP.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseEditModal" disabled="@isSavingEdit">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="UpdateSubAreaAsync" disabled="@isSavingEdit">
+                        @if (isSavingEdit)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Updating & Syncing...</span>
+                        }
+                        else
+                        {
+                            <span>Save Changes</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [SupplyParameterFromQuery(Name = "areaId")]
     public int? AreaId { get; set; }
@@ -260,13 +390,23 @@ else
     private string? successMessage;
     private string? errorMessage;
 
-    // Modal state
+    // Create Modal state
     private bool showCreateModal = false;
     private bool isSaving = false;
     private string? modalError;
     private int newAreaId = 0;
     private string newSubAreaCode = string.Empty;
     private string newSubAreaName = string.Empty;
+
+    // Edit Modal state
+    private bool showEditModal = false;
+    private bool isSavingEdit = false;
+    private string? editModalError;
+    private SubAreaDto? editingSubArea;
+    private int editAreaId = 0;
+    private string editSubAreaName = string.Empty;
+
+    private bool CanManageCollieries => UserSession.IsSuperAdmin || UserSession.IsAreaAdmin;
 
     protected override async Task OnInitializedAsync()
     {
@@ -287,7 +427,21 @@ else
         isLoading = true;
         try
         {
-            areas = await AreaService.GetAllAreasAsync();
+            var allAreas = await AreaService.GetAllAreasAsync();
+            if (UserSession.IsAreaAdmin && UserSession.CurrentAreaId.HasValue)
+            {
+                areas = allAreas.Where(a => a.Id == UserSession.CurrentAreaId.Value).ToList();
+                selectedAreaId = UserSession.CurrentAreaId.Value;
+            }
+            else if (UserSession.IsUnitAdmin && UserSession.CurrentAreaId.HasValue)
+            {
+                areas = allAreas.Where(a => a.Id == UserSession.CurrentAreaId.Value).ToList();
+                selectedAreaId = UserSession.CurrentAreaId.Value;
+            }
+            else
+            {
+                areas = allAreas;
+            }
             await LoadSubAreasInternalAsync();
         }
         catch (Exception ex)
@@ -309,8 +463,17 @@ else
 
     private async Task LoadSubAreasInternalAsync()
     {
-        int? areaIdFilter = selectedAreaId > 0 ? selectedAreaId : null;
-        subAreas = await AreaService.GetSubAreasAsync(areaIdFilter);
+        int? areaIdFilter = selectedAreaId > 0 ? selectedAreaId : UserSession.CurrentAreaId;
+        var all = await AreaService.GetSubAreasAsync(areaIdFilter);
+
+        if (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
+        {
+            subAreas = all.Where(s => s.Id == UserSession.CurrentSubAreaId.Value).ToList();
+        }
+        else
+        {
+            subAreas = all;
+        }
     }
 
     private IEnumerable<SubAreaDto> FilteredSubAreas
@@ -342,7 +505,15 @@ else
 
     private void OpenCreateModal()
     {
-        newAreaId = selectedAreaId > 0 ? selectedAreaId : (areas.FirstOrDefault()?.Id ?? 0);
+        if (UserSession.IsAreaAdmin && UserSession.CurrentAreaId.HasValue)
+        {
+            newAreaId = UserSession.CurrentAreaId.Value;
+        }
+        else
+        {
+            newAreaId = selectedAreaId > 0 ? selectedAreaId : (areas.FirstOrDefault()?.Id ?? 0);
+        }
+
         newSubAreaCode = string.Empty;
         newSubAreaName = string.Empty;
         modalError = null;
@@ -353,6 +524,22 @@ else
     {
         showCreateModal = false;
         modalError = null;
+    }
+
+    private void OpenEditModal(SubAreaDto sub)
+    {
+        editingSubArea = sub;
+        editAreaId = sub.AreaId;
+        editSubAreaName = sub.SubAreaName;
+        editModalError = null;
+        showEditModal = true;
+    }
+
+    private void CloseEditModal()
+    {
+        showEditModal = false;
+        editingSubArea = null;
+        editModalError = null;
     }
 
     private async Task SaveSubAreaAsync()
@@ -372,7 +559,7 @@ else
 
         if (string.IsNullOrWhiteSpace(newSubAreaName))
         {
-            modalError = "Sub-Area Name is required.";
+            modalError = "Colliery Unit Description / Name is required.";
             return;
         }
 
@@ -381,7 +568,7 @@ else
         {
             var dto = new CreateSubAreaDto(newSubAreaCode.Trim().ToUpperInvariant(), newSubAreaName.Trim(), newAreaId);
             var result = await AreaService.CreateSubAreaAsync(dto);
-            successMessage = $"Sub-Area '{result.SubAreaName}' ({result.SubAreaCode}) created successfully. eBios sync status: {(result.IsSyncedToEbios ? "Synced" : "Pending")}.";
+            successMessage = $"Colliery Unit '{result.SubAreaName}' ({result.SubAreaCode}) created successfully. eBios sync: {(result.IsSyncedToEbios ? "Synced" : "Pending")}.";
             showCreateModal = false;
             await LoadSubAreasInternalAsync();
         }
@@ -392,6 +579,50 @@ else
         finally
         {
             isSaving = false;
+        }
+    }
+
+    private async Task UpdateSubAreaAsync()
+    {
+        if (editingSubArea == null) return;
+
+        editModalError = null;
+        if (editAreaId <= 0)
+        {
+            editModalError = "Please select a Parent Mining Area.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(editSubAreaName))
+        {
+            editModalError = "Colliery Unit Description / Name cannot be empty.";
+            return;
+        }
+
+        isSavingEdit = true;
+        try
+        {
+            var dto = new CreateSubAreaDto(editingSubArea.SubAreaCode, editSubAreaName.Trim(), editAreaId);
+            var ok = await AreaService.UpdateSubAreaAsync(editingSubArea.Id, dto);
+            if (ok)
+            {
+                successMessage = $"Colliery Unit '{editingSubArea.SubAreaCode}' updated successfully and synced to eBios.";
+                showEditModal = false;
+                editingSubArea = null;
+                await LoadSubAreasInternalAsync();
+            }
+            else
+            {
+                editModalError = "Failed to update colliery unit.";
+            }
+        }
+        catch (Exception ex)
+        {
+            editModalError = ex.Message;
+        }
+        finally
+        {
+            isSavingEdit = false;
         }
     }
 
@@ -423,4 +654,3 @@ else
         }
     }
 }
-

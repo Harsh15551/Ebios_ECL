@@ -18,6 +18,8 @@ public class AppDbContext : DbContext
     public DbSet<ShiftMaster> ShiftMasters => Set<ShiftMaster>();
     public DbSet<EmployeeShiftRoster> EmployeeShiftRosters => Set<EmployeeShiftRoster>();
     public DbSet<AttendanceDailySummary> AttendanceDailySummaries => Set<AttendanceDailySummary>();
+    public DbSet<DesignationMaster> DesignationMasters => Set<DesignationMaster>();
+    public DbSet<EmployeeBiometricForm> EmployeeBiometricForms => Set<EmployeeBiometricForm>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -185,6 +187,54 @@ public class AppDbContext : DbContext
             entity.HasOne(s => s.Shift)
                   .WithMany()
                   .HasForeignKey(s => s.ShiftId)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // EmployeeBiometricForm configuration (ECL & WEBEL registration)
+        modelBuilder.Entity<EmployeeBiometricForm>(entity =>
+        {
+            entity.HasKey(f => f.Id);
+            entity.HasIndex(f => f.EmpCode).IsUnique();
+            entity.Property(f => f.EmpCode).HasMaxLength(50).IsRequired();
+            entity.Property(f => f.EmployeeName).HasMaxLength(150);
+            entity.Property(f => f.AadhaarNumber).HasMaxLength(50);
+            entity.Property(f => f.Category).HasMaxLength(50);
+            entity.Property(f => f.PositionDesignation).HasMaxLength(100);
+            entity.Property(f => f.DepartmentUnit).HasMaxLength(150);
+            entity.Property(f => f.PlaceOfPosting).HasMaxLength(150);
+            entity.Property(f => f.RegistrationLocation).HasMaxLength(150);
+            entity.Property(f => f.ControllingOfficerName).HasMaxLength(150);
+            entity.Property(f => f.ControllingOfficerDesignation).HasMaxLength(150);
+
+            entity.Property(f => f.AadhaarPhotoPath).HasMaxLength(300);
+            entity.Property(f => f.IdCardPhotoPath).HasMaxLength(300);
+            entity.Property(f => f.PersonPhotoPath).HasMaxLength(300);
+            entity.Property(f => f.TemplatePhotoPath).HasMaxLength(300);
+            entity.Property(f => f.SignedPhysicalFormPath).HasMaxLength(300);
+
+            entity.Property(f => f.EclHrName).HasMaxLength(150);
+            entity.Property(f => f.EclHrDesignation).HasMaxLength(150);
+            entity.Property(f => f.EclHrDepartment).HasMaxLength(100);
+            entity.Property(f => f.EclHrOrganization).HasMaxLength(100);
+
+            entity.Property(f => f.EclSecurityName).HasMaxLength(150);
+            entity.Property(f => f.EclSecurityDesignation).HasMaxLength(150);
+            entity.Property(f => f.EclSecurityDepartment).HasMaxLength(100);
+            entity.Property(f => f.EclSecurityOrganization).HasMaxLength(100);
+
+            entity.Property(f => f.WebelName).HasMaxLength(150);
+            entity.Property(f => f.WebelDesignation).HasMaxLength(150);
+            entity.Property(f => f.WebelDepartment).HasMaxLength(100);
+            entity.Property(f => f.WebelOrganization).HasMaxLength(100);
+
+            entity.Property(f => f.Witness4Name).HasMaxLength(150);
+            entity.Property(f => f.Witness4Designation).HasMaxLength(150);
+            entity.Property(f => f.Witness4Department).HasMaxLength(100);
+            entity.Property(f => f.Witness4Organization).HasMaxLength(100);
+
+            entity.HasOne(f => f.Employee)
+                  .WithMany()
+                  .HasForeignKey(f => f.EmployeeId)
                   .OnDelete(DeleteBehavior.SetNull);
         });
     }

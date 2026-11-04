@@ -15,26 +15,55 @@
         <div class="d-flex align-items-center gap-2">
             <h2 class="h3 fw-bold mb-1">Shift Master & Worker Rosters</h2>
             <span class="badge bg-secondary">ECL Operations</span>
+            @if (!UserSession.CanManageShifts)
+            {
+                <span class="badge bg-warning text-dark"><i class="bi bi-eye"></i> View-Only Access</span>
+            }
         </div>
         <p class="text-muted mb-0">
-            Pre-configured eBioServer master shifts and daily colliery roster schedules.
+            @if (!UserSession.CanManageShifts)
+            {
+                <span class="text-danger fw-semibold">Read-Only Mode: Shift creation, roster assignment, and bulk upload are locked by ECL Admin.</span>
+            }
+            else
+            {
+                <span>Pre-configured eBioServer master shifts and daily colliery roster schedules.</span>
+            }
         </p>
     </div>
     <div class="d-flex gap-2">
         @if (activeTab == "master")
         {
-            <button class="btn btn-primary btn-sm" @onclick="OpenCreateShiftModal">
-                <i class="bi bi-plus-circle me-1"></i> Add New Shift
-            </button>
+            @if (UserSession.CanManageShifts)
+            {
+                <button class="btn btn-primary btn-sm" @onclick="OpenCreateShiftModal">
+                    <i class="bi bi-plus-circle me-1"></i> Add New Shift
+                </button>
+            }
+            else
+            {
+                <span class="badge bg-secondary align-self-center py-2 px-3">
+                    <i class="bi bi-lock-fill me-1"></i> View Only
+                </span>
+            }
         }
         else if (activeTab == "roster")
         {
-            <button class="btn btn-outline-primary btn-sm" @onclick="OpenBulkUploadModal">
-                <i class="bi bi-file-earmark-spreadsheet me-1"></i> Bulk Excel / CSV Import
-            </button>
-            <button class="btn btn-primary btn-sm" @onclick="OpenAssignModal">
-                <i class="bi bi-calendar-plus me-1"></i> Assign Shift
-            </button>
+            @if (UserSession.CanManageShifts)
+            {
+                <button class="btn btn-outline-primary btn-sm" @onclick="OpenBulkUploadModal">
+                    <i class="bi bi-file-earmark-spreadsheet me-1"></i> Bulk Excel / CSV Import
+                </button>
+                <button class="btn btn-primary btn-sm" @onclick="OpenAssignModal">
+                    <i class="bi bi-calendar-plus me-1"></i> Assign Shift
+                </button>
+            }
+            else
+            {
+                <span class="badge bg-secondary align-self-center py-2 px-3">
+                    <i class="bi bi-lock-fill me-1"></i> View Only
+                </span>
+            }
         }
     </div>
 </div>
@@ -82,9 +111,8 @@
                     <tr>
                         <th style="width: 130px;">Shift Code</th>
                         <th>Shift Description</th>
-                        <th style="width: 130px;">Shift Hours</th>
-                        <th style="width: 140px;">IN Window</th>
-                        <th style="width: 140px;">OUT Window</th>
+                        <th style="width: 140px;">Shift Hours</th>
+                        <th style="width: 150px;">Reporting Window (IN)</th>
                         <th style="width: 110px;">Grace Period</th>
                         <th style="width: 90px;">Duration</th>
                         <th style="width: 110px;">Type</th>
@@ -120,9 +148,6 @@
                                     <small class="text-muted font-monospace">@FormatTime(s.InWindowStart) – @FormatTime(s.InWindowEnd)</small>
                                 </td>
                                 <td>
-                                    <small class="text-muted font-monospace">@FormatTime(s.OutWindowStart) – @FormatTime(s.OutWindowEnd)</small>
-                                </td>
-                                <td>
                                     <span class="badge bg-info text-dark">@s.GraceMinutes mins</span>
                                 </td>
                                 <td>
@@ -139,9 +164,16 @@
                                     }
                                 </td>
                                 <td class="text-end">
-                                    <button class="btn btn-outline-primary btn-sm" @onclick="@(() => OpenEditShiftModal(s))" title="Edit Shift">
-                                        <i class="bi bi-pencil-square"></i> Edit
-                                    </button>
+                                    @if (UserSession.CanManageShifts)
+                                    {
+                                        <button class="btn btn-outline-primary btn-sm" @onclick="@(() => OpenEditShiftModal(s))" title="Edit Shift">
+                                            <i class="bi bi-pencil-square"></i> Edit
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-light text-muted border">View Only</span>
+                                    }
                                 </td>
                             </tr>
                         }
@@ -239,9 +271,16 @@ else if (activeTab == "roster")
                                 </td>
                                 <td>@r.RosterDate.ToString("dd-MM-yyyy")</td>
                                 <td class="text-end">
-                                    <button class="btn btn-outline-secondary btn-sm" @onclick="@(() => OpenEditAssignModal(r))">
-                                        <i class="bi bi-pencil-square"></i> Change
-                                    </button>
+                                    @if (UserSession.CanManageShifts)
+                                    {
+                                        <button class="btn btn-outline-secondary btn-sm" @onclick="@(() => OpenEditAssignModal(r))">
+                                            <i class="bi bi-pencil-square"></i> Change
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-light text-muted border">View Only</span>
+                                    }
                                 </td>
                             </tr>
                         }
@@ -307,25 +346,20 @@ else if (activeTab == "roster")
                         <hr class="my-3 text-muted" />
 
                         <div class="row g-3">
-                            <div class="col-6 col-md-3">
-                                <label class="form-label small fw-semibold">IN Window Start</label>
+                            <div class="col-6 col-md-4">
+                                <label class="form-label small fw-semibold">Reporting Window Start (IN)</label>
                                 <input type="time" class="form-control" @bind="shiftFormInStart" />
-                                <small class="text-muted">Earliest IN punch</small>
+                                <small class="text-muted">Earliest punch (StartTime - 30m)</small>
                             </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label small fw-semibold">IN Window End</label>
+                            <div class="col-6 col-md-4">
+                                <label class="form-label small fw-semibold">Reporting Window End (IN)</label>
                                 <input type="time" class="form-control" @bind="shiftFormInEnd" />
-                                <small class="text-muted">Latest IN punch</small>
+                                <small class="text-muted">Latest punch (StartTime + 90m)</small>
                             </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label small fw-semibold">OUT Window Start</label>
-                                <input type="time" class="form-control" @bind="shiftFormOutStart" />
-                                <small class="text-muted">Earliest OUT punch</small>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label small fw-semibold">OUT Window End</label>
-                                <input type="time" class="form-control" @bind="shiftFormOutEnd" />
-                                <small class="text-muted">Latest OUT punch</small>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label small fw-semibold">Exit Policy (OUT)</label>
+                                <input type="text" class="form-control text-muted" value="Last punch of day (No restrictions)" disabled />
+                                <small class="text-muted">Early exit evaluated against Shift End Time</small>
                             </div>
                         </div>
                     </div>
@@ -427,28 +461,43 @@ else if (activeTab == "roster")
 {
     <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
         <div class="modal-dialog modal-lg">
-            <div class="modal-content">
+            <div class="modal-content shadow">
                 <div class="modal-header">
-                    <h5 class="modal-title fw-bold">Bulk Roster Import (Excel / CSV)</h5>
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">Bulk Worker Roster Import (Excel / CSV)</h5>
+                        <small class="text-muted">Schedule shifts for multiple employees using Excel copy-paste or file upload</small>
+                    </div>
                     <button type="button" class="btn-close" @onclick="@(() => showBulkUploadModal = false)"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted small">
-                        Paste your roster records below or upload a CSV file with columns: <code>EmpCode,Date,ShiftCode</code>.
-                    </p>
-
-                    <div class="alert alert-info py-2 small mb-3">
-                        <strong>Expected Format:</strong><br />
-                        <code>EmpCode,Date(YYYY-MM-DD),ShiftCode</code><br />
-                        <em>Example:</em><br />
-                        <code>ECL-7001,2026-11-03,Shift I</code><br />
-                        <code>ECL-7002,2026-11-03,Shift II</code><br />
-                        <code>ECL-7003,2026-11-03,Shift III</code>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="small fw-semibold text-secondary">Step 1: Choose File OR Copy-Paste Data</span>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-success" @onclick="DownloadSampleRosterCsvAsync" title="Download ECL_Bulk_Roster_Template.csv to your computer">
+                                📥 Download Sample Template
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="FillSampleData" title="Auto-fill sample data into the box below">
+                                📋 Fill Sample Data
+                            </button>
+                        </div>
                     </div>
 
+                    <!-- File Picker -->
                     <div class="mb-3">
-                        <label class="form-label small fw-semibold">Paste CSV Data</label>
-                        <textarea class="form-control font-monospace" rows="8" placeholder="ECL-7001,2026-11-03,Shift I&#10;ECL-7002,2026-11-03,Shift II" @bind="bulkCsvText"></textarea>
+                        <label class="form-label small fw-semibold">Upload CSV / Excel Text File</label>
+                        <InputFile OnChange="HandleBulkFileSelectedAsync" class="form-control form-control-sm" accept=".csv,.txt" />
+                        <small class="text-muted">Select <code>sample_bulk_roster.csv</code> from your workspace or any CSV export.</small>
+                    </div>
+
+                    <div class="alert alert-info py-2 small mb-3">
+                        <strong>Expected Format:</strong> <code>EmpCode,Date(YYYY-MM-DD),ShiftCode</code><br />
+                        <span class="text-muted">Supports comma (<code>,</code>), tab (from copying Excel cells), or semicolon (<code>;</code>) delimiters.</span>
+                    </div>
+
+                    <!-- Direct Textarea -->
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">CSV / Excel Clipboard Data</label>
+                        <textarea class="form-control font-monospace small" rows="8" placeholder="EmpCode,Date,ShiftCode&#10;ECL-7001,2026-11-04,Shift I&#10;ECL-7002,2026-11-04,Shift II&#10;ECL-7003,2026-11-04,Shift III" @bind="bulkCsvText"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -457,7 +506,7 @@ else if (activeTab == "roster")
                         @if (isBulkSaving)
                         {
                             <span class="spinner-border spinner-border-sm me-1"></span>
-                            <span>Importing...</span>
+                            <span>Importing & Recalculating...</span>
                         }
                         else
                         {
@@ -569,10 +618,10 @@ else if (activeTab == "roster")
         shiftFormName = string.Empty;
         shiftFormStartTime = new TimeOnly(6, 0);
         shiftFormEndTime = new TimeOnly(14, 0);
-        shiftFormInStart = new TimeOnly(4, 30);
-        shiftFormInEnd = new TimeOnly(9, 0);
-        shiftFormOutStart = new TimeOnly(13, 30);
-        shiftFormOutEnd = new TimeOnly(17, 0);
+        shiftFormInStart = new TimeOnly(5, 30);
+        shiftFormInEnd = new TimeOnly(7, 30);
+        shiftFormOutStart = new TimeOnly(0, 0);
+        shiftFormOutEnd = new TimeOnly(23, 59);
         shiftFormGrace = 30;
         shiftFormDuration = 8.0;
         shiftFormIsNight = false;
@@ -600,24 +649,20 @@ else if (activeTab == "roster")
 
     private void AutoCalculateDetectionWindows()
     {
-        // Automatically suggest detection windows based on Start and End time
+        // Automatically calculate detection windows: [StartTime - 30m, StartTime + 90m]
         var startTs = shiftFormStartTime.ToTimeSpan();
         var endTs = shiftFormEndTime.ToTimeSpan();
 
-        // IN Window: 1.5 hrs before start to 3 hrs after start
-        var inStart = startTs.Subtract(TimeSpan.FromHours(1.5));
+        var inStart = startTs.Subtract(TimeSpan.FromMinutes(30));
         if (inStart < TimeSpan.Zero) inStart = inStart.Add(TimeSpan.FromHours(24));
-        var inEnd = startTs.Add(TimeSpan.FromHours(3));
 
-        // OUT Window: 30m before end to 3 hrs after end
-        var outStart = endTs.Subtract(TimeSpan.FromMinutes(30));
-        if (outStart < TimeSpan.Zero) outStart = outStart.Add(TimeSpan.FromHours(24));
-        var outEnd = endTs.Add(TimeSpan.FromHours(3));
+        var inEnd = startTs.Add(TimeSpan.FromMinutes(90));
+        if (inEnd >= TimeSpan.FromHours(24)) inEnd = inEnd.Subtract(TimeSpan.FromHours(24));
 
         shiftFormInStart = TimeOnly.FromTimeSpan(inStart);
-        shiftFormInEnd = TimeOnly.FromTimeSpan(inEnd > TimeSpan.FromHours(23.99) ? TimeSpan.FromHours(23.98) : inEnd);
-        shiftFormOutStart = TimeOnly.FromTimeSpan(outStart);
-        shiftFormOutEnd = TimeOnly.FromTimeSpan(outEnd > TimeSpan.FromHours(23.99) ? TimeSpan.FromHours(23.98) : outEnd);
+        shiftFormInEnd = TimeOnly.FromTimeSpan(inEnd);
+        shiftFormOutStart = new TimeOnly(0, 0);
+        shiftFormOutEnd = new TimeOnly(23, 59);
 
         // Detect if night shift (End < Start)
         shiftFormIsNight = endTs < startTs;
@@ -758,11 +803,72 @@ else if (activeTab == "roster")
         showBulkUploadModal = true;
     }
 
+    private async Task HandleBulkFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            var file = e.File;
+            if (file != null)
+            {
+                using var stream = file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+                using var reader = new StreamReader(stream);
+                bulkCsvText = await reader.ReadToEndAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Failed to read file: " + ex.Message;
+        }
+    }
+
+    private void FillSampleData()
+    {
+        string dToday = selectedRosterDate.ToString("yyyy-MM-dd");
+        string dTomorrow = selectedRosterDate.AddDays(1).ToString("yyyy-MM-dd");
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("EmpCode,Date,ShiftCode");
+        sb.AppendLine($"ECL-7001,{dToday},Shift I");
+        sb.AppendLine($"ECL-7002,{dToday},Shift II");
+        sb.AppendLine($"ECL-7003,{dToday},Shift III");
+        sb.AppendLine($"ECL-7001,{dTomorrow},Shift II");
+        sb.AppendLine($"ECL-7002,{dTomorrow},Shift III");
+        sb.AppendLine($"ECL-7003,{dTomorrow},Shift I");
+        bulkCsvText = sb.ToString();
+    }
+
+    private async Task DownloadSampleRosterCsvAsync()
+    {
+        string dToday = selectedRosterDate.ToString("yyyy-MM-dd");
+        string dTomorrow = selectedRosterDate.AddDays(1).ToString("yyyy-MM-dd");
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("EmpCode,Date,ShiftCode");
+        sb.AppendLine($"ECL-7001,{dToday},Shift I");
+        sb.AppendLine($"ECL-7002,{dToday},Shift II");
+        sb.AppendLine($"ECL-7003,{dToday},Shift III");
+        sb.AppendLine($"ECL-7001,{dTomorrow},Shift II");
+        sb.AppendLine($"ECL-7002,{dTomorrow},Shift III");
+        sb.AppendLine($"ECL-7003,{dTomorrow},Shift I");
+
+        string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
+        string fileName = "ECL_Bulk_Roster_Template.csv";
+
+        await JS.InvokeVoidAsync("eval", $@"
+            var link = document.createElement('a');
+            link.download = '{fileName}';
+            link.href = 'data:text/csv;base64,{base64}';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        ");
+    }
+
     private async Task ProcessBulkRosterUploadAsync()
     {
         if (string.IsNullOrWhiteSpace(bulkCsvText))
         {
-            errorMessage = "Please enter or paste CSV lines.";
+            errorMessage = "Please enter or paste CSV lines, select a file, or click 'Fill Sample Data'.";
             return;
         }
 
@@ -772,15 +878,31 @@ else if (activeTab == "roster")
             var lines = bulkCsvText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             var list = new List<AssignRosterDto>();
 
-            foreach (var line in lines)
+            foreach (var rawLine in lines)
             {
-                var parts = line.Split(',');
+                var line = rawLine.Trim();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                // Support comma, tab (from copying Excel cells), or semicolon
+                char delimiter = line.Contains('\t') ? '\t' : (line.Contains(',') ? ',' : ';');
+                var parts = line.Split(delimiter);
+
                 if (parts.Length >= 3)
                 {
-                    string code = parts[0].Trim();
-                    if (DateTime.TryParse(parts[1].Trim(), out var parsedDate))
+                    string code = parts[0].Trim().Trim('"', '\'');
+                    string datePart = parts[1].Trim().Trim('"', '\'');
+                    string shift = parts[2].Trim().Trim('"', '\'');
+
+                    // Skip header row
+                    if (code.Equals("EmpCode", StringComparison.OrdinalIgnoreCase) || 
+                        code.Equals("WorkerID", StringComparison.OrdinalIgnoreCase) ||
+                        datePart.Equals("Date", StringComparison.OrdinalIgnoreCase))
                     {
-                        string shift = parts[2].Trim();
+                        continue;
+                    }
+
+                    if (DateTime.TryParse(datePart, out var parsedDate))
+                    {
                         list.Add(new AssignRosterDto(code, parsedDate, shift, UserSession.CurrentUser?.Username ?? "BulkImport"));
                     }
                 }
@@ -793,7 +915,7 @@ else if (activeTab == "roster")
             }
 
             int imported = await RosterService.BulkAssignRosterAsync(list);
-            successMessage = $"Successfully imported {imported} shift assignments!";
+            successMessage = $"Successfully imported {imported} shift assignments! Any existing attendance punches were retroactively recalculated.";
             showBulkUploadModal = false;
             await LoadRosterAsync();
         }

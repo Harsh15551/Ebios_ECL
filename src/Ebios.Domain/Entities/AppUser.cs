@@ -22,4 +22,8 @@ public class AppUser
     public string? TwoFactorSecret { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // Granular Permissions (Admin Access Control)
+    public bool CanManageEmployees { get; set; } = true;
+    public bool CanManageShifts { get; set; } = true;
 }

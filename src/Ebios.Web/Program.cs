@@ -33,6 +33,7 @@ builder.Services.AddScoped<IShiftService, ShiftService>();
 builder.Services.AddScoped<IRosterService, RosterService>();
 builder.Services.AddScoped<IAttendanceProcessingService, AttendanceProcessingService>();
 builder.Services.AddScoped<IAttendanceService, AttendanceService>();
+builder.Services.AddScoped<IBiometricFormService, BiometricFormService>();
 builder.Services.AddScoped<Ebios.Web.Services.UserSessionService>();
 
 var app = builder.Build();
@@ -65,6 +66,7 @@ app.UseAntiforgery();
 
 app.MapStaticAssets();
 app.MapWebhookEndpoints();
+app.MapBiometricEndpoints();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 

@@ -1,0 +1,338 @@
+@inject IBiometricFormService BiometricService
+@inject IAreaService AreaService
+@inject IJSRuntime JS
+
+@if (IsOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.6); z-index: 1060; overflow-y: auto;">
+        <div class="modal-dialog modal-xl modal-dialog-centered my-4" style="max-width: 1050px;">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-dark text-white py-3 no-print">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fs-4">🖨️</span>
+                        <div>
+                            <h5 class="modal-title fw-bold mb-0">Bulk Print Biometric Registration Forms</h5>
+                            <small class="text-light opacity-75">Print official ECL &amp; WEBEL forms in batch</small>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        @if (forms.Any())
+                        {
+                            <button type="button" class="btn btn-primary btn-sm" @onclick="PrintAll">
+                                <i class="bi bi-printer me-1"></i> Print All (@forms.Count Forms)
+                            </button>
+                        }
+                        <button type="button" class="btn-close btn-close-white" @onclick="Close"></button>
+                    </div>
+                </div>
+
+                <div class="modal-body p-4 bg-light">
+                    <!-- Filters (Hidden in Print) -->
+                    <div class="card border-0 shadow-sm p-3 mb-4 no-print">
+                        <div class="row g-2 align-items-center">
+                            <div class="col-md-4">
+                                <label class="form-label small fw-semibold mb-1">Mining Area</label>
+                                <select class="form-select form-select-sm" value="@selectedAreaId" @onchange="OnAreaFilterChanged">
+                                    <option value="0">All Mining Areas</option>
+                                    @foreach (var area in areas)
+                                    {
+                                        <option value="@area.Id">@area.AreaName</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-semibold mb-1">Colliery Unit</label>
+                                <select class="form-select form-select-sm" value="@selectedSubAreaId" @onchange="OnSubAreaFilterChanged">
+                                    <option value="0">All Units</option>
+                                    @foreach (var sub in filteredSubAreas)
+                                    {
+                                        <option value="@sub.Id">@sub.SubAreaName</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-semibold mb-1">Search Worker</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" placeholder="Emp Code or Name..." @bind="searchTerm" @bind:event="oninput" />
+                                    <button class="btn btn-secondary" @onclick="LoadFormsAsync">
+                                        <i class="bi bi-search"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    @if (isLoading)
+                    {
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary mb-2" role="status"></div>
+                            <div>Loading biometric forms...</div>
+                        </div>
+                    }
+                    else if (!forms.Any())
+                    {
+                        <div class="text-center py-5 bg-white rounded border p-4">
+                            <i class="bi bi-inbox fs-1 text-muted mb-2 d-block"></i>
+                            <h6 class="fw-semibold text-muted">No biometric registration forms found for this selection.</h6>
+                        </div>
+                    }
+                    else
+                    {
+                        <div id="bulkPrintContainer">
+                            @foreach (var form in forms)
+                            {
+                                <div class="ecl-biometric-template border border-dark p-3 p-md-4 bg-white mb-5 page-break-after">
+                                    <!-- Official Document Title -->
+                                    <div class="text-center mb-3 pb-2 border-bottom border-dark">
+                                        <h5 class="fw-bold text-uppercase mb-1" style="font-family: 'Times New Roman', serif;">
+                                            BIOMETRIC REGISTRATION TEMPLATE FOR EMPLOYEES OF ECL
+                                        </h5>
+                                        <div class="text-muted small fw-semibold">
+                                            EASTERN COALFIELDS LIMITED &bull; ELECTRONICS CORPORATION (WEBEL)
+                                        </div>
+                                    </div>
+
+                                    <!-- SECTION 1 -->
+                                    <div class="mb-3">
+                                        <div class="fw-bold text-uppercase mb-1" style="font-size: 0.85rem; font-family: 'Times New Roman', serif;">
+                                            DETAILS OF THE PERSON APPEARED AT REGISTRATION:
+                                        </div>
+                                        <table class="table table-bordered border-dark align-middle mb-0" style="font-size: 0.85rem;">
+                                            <thead style="background-color: #f3f4f6;">
+                                                <tr>
+                                                    <th style="width: 8%; text-align: center;" class="py-1">S. No.</th>
+                                                    <th style="width: 42%;" class="py-1">Description</th>
+                                                    <th style="width: 50%;" class="py-1">Particulars</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr><td class="text-center fw-bold py-1">1</td><td class="py-1">Employee ID</td><td class="py-1 fw-bold">@form.EmpCode</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">2</td><td class="py-1">Employee Name</td><td class="py-1 fw-semibold">@form.EmployeeName</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">3</td><td class="py-1">Aadhaar Number</td><td class="py-1">@form.AadhaarNumber</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">4</td><td class="py-1">Category of Employee</td><td class="py-1">@form.Category</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">5</td><td class="py-1">Position/ Designation</td><td class="py-1">@form.PositionDesignation</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">6</td><td class="py-1">Department / Unit</td><td class="py-1">@form.DepartmentUnit</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">7</td><td class="py-1">Place of Posting</td><td class="py-1">@form.PlaceOfPosting</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">8</td><td class="py-1">Registration Date &amp; Time</td><td class="py-1">@(form.RegistrationDateTime?.ToString("dd-MMM-yyyy HH:mm") ?? "—")</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">9</td><td class="py-1">Location of Registration</td><td class="py-1">@form.RegistrationLocation</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">10</td><td class="py-1">Name of Controlling Officer</td><td class="py-1">@form.ControllingOfficerName</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">11</td><td class="py-1">Designation of Controlling Officer</td><td class="py-1">@form.ControllingOfficerDesignation</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <!-- SECTION 2: 4 PHOTOS -->
+                                    <div class="mb-3">
+                                        <div class="fw-bold text-uppercase mb-1" style="font-size: 0.85rem; font-family: 'Times New Roman', serif;">
+                                            RELEVANT PHOTOGRAPHS:
+                                        </div>
+                                        <table class="table table-bordered border-dark text-center align-middle mb-0" style="font-size: 0.8rem;">
+                                            <tbody>
+                                                <tr style="height: 140px;">
+                                                    <td style="width: 50%; vertical-align: middle;" class="p-1">
+                                                        @if (!string.IsNullOrEmpty(form.AadhaarPhotoUrl))
+                                                        {
+                                                            <img src="@form.AadhaarPhotoUrl" alt="Aadhaar" style="max-height: 130px; max-width: 95%; object-fit: contain;" />
+                                                        }
+                                                        else { <span class="text-muted small">[Photo of Aadhaar Card]</span> }
+                                                    </td>
+                                                    <td style="width: 50%; vertical-align: middle;" class="p-1">
+                                                        @if (!string.IsNullOrEmpty(form.IdCardPhotoUrl))
+                                                        {
+                                                            <img src="@form.IdCardPhotoUrl" alt="ID Card" style="max-height: 130px; max-width: 95%; object-fit: contain;" />
+                                                        }
+                                                        else { <span class="text-muted small">[Photo of Other ID Card]</span> }
+                                                    </td>
+                                                </tr>
+                                                <tr style="background-color: #f3f4f6;" class="fw-semibold">
+                                                    <td class="py-1">Photo of Aadhaar Card Produced at time of Registration</td>
+                                                    <td class="py-1">Photo of ID Card (other than Aadhaar, if any) Produced at time of Registration</td>
+                                                </tr>
+                                                <tr style="height: 140px;">
+                                                    <td style="width: 50%; vertical-align: middle;" class="p-1">
+                                                        @if (!string.IsNullOrEmpty(form.PersonPhotoUrl))
+                                                        {
+                                                            <img src="@form.PersonPhotoUrl" alt="Person" style="max-height: 130px; max-width: 95%; object-fit: contain;" />
+                                                        }
+                                                        else { <span class="text-muted small">[Photo of Person]</span> }
+                                                    </td>
+                                                    <td style="width: 50%; vertical-align: middle;" class="p-1">
+                                                        @if (!string.IsNullOrEmpty(form.TemplatePhotoUrl))
+                                                        {
+                                                            <img src="@form.TemplatePhotoUrl" alt="Template" style="max-height: 130px; max-width: 95%; object-fit: contain;" />
+                                                        }
+                                                        else { <span class="text-muted small">[Template Saved in Machine]</span> }
+                                                    </td>
+                                                </tr>
+                                                <tr style="background-color: #f3f4f6;" class="fw-semibold">
+                                                    <td class="py-1">Photo of Person appeared at Registration</td>
+                                                    <td class="py-1">Template Saved in Machine</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <!-- SECTION 3: PERSONNEL PRESENT -->
+                                    <div>
+                                        <div class="fw-bold text-uppercase mb-1" style="font-size: 0.85rem; font-family: 'Times New Roman', serif;">
+                                            PERSONNEL PRESENT DURING REGISTRATION (From ECL and WEBEL):
+                                        </div>
+                                        <table class="table table-bordered border-dark align-middle mb-0" style="font-size: 0.8rem;">
+                                            <thead style="background-color: #f3f4f6;">
+                                                <tr>
+                                                    <th style="width: 8%; text-align: center;" class="py-1">S. No.</th>
+                                                    <th style="width: 32%;" class="py-1">Name</th>
+                                                    <th style="width: 28%;" class="py-1">Designation</th>
+                                                    <th style="width: 16%;" class="py-1">Department</th>
+                                                    <th style="width: 16%;" class="py-1">Organization</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr><td class="text-center fw-bold py-1">1</td><td class="py-1">@form.EclHrName</td><td class="py-1">@form.EclHrDesignation</td><td class="py-1">HR</td><td class="py-1">ECL</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">2</td><td class="py-1">@form.EclSecurityName</td><td class="py-1">@form.EclSecurityDesignation</td><td class="py-1">Security</td><td class="py-1">ECL</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">3</td><td class="py-1">@form.WebelName</td><td class="py-1">@form.WebelDesignation</td><td class="py-1">@(form.WebelDepartment ?? "Technical")</td><td class="py-1">WEBEL</td></tr>
+                                                <tr><td class="text-center fw-bold py-1">4</td><td class="py-1">@form.Witness4Name</td><td class="py-1">@form.Witness4Designation</td><td class="py-1">@(form.Witness4Department ?? "Operations")</td><td class="py-1">ECL / WEBEL</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="modal-footer bg-light no-print py-2">
+                    <button type="button" class="btn btn-secondary" @onclick="Close">Close</button>
+                    @if (forms.Any())
+                    {
+                        <button type="button" class="btn btn-primary" @onclick="PrintAll">
+                            <i class="bi bi-printer me-1"></i> Print All Forms
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    @@media print {
+        body * {
+            visibility: hidden;
+        }
+        #bulkPrintContainer, #bulkPrintContainer * {
+            visibility: visible;
+        }
+        #bulkPrintContainer {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+        }
+        .page-break-after {
+            page-break-after: always;
+            break-after: page;
+        }
+        .no-print {
+            display: none !important;
+        }
+        .modal {
+            position: static !important;
+            overflow: visible !important;
+            background: none !important;
+        }
+        .modal-dialog {
+            max-width: 100% !important;
+            margin: 0 !important;
+        }
+        .modal-content {
+            border: none !important;
+            box-shadow: none !important;
+        }
+    }
+</style>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback OnClosed { get; set; }
+
+    private List<BiometricFormDto> forms = new();
+    private List<AreaDto> areas = new();
+    private List<SubAreaDto> allSubAreas = new();
+    private List<SubAreaDto> filteredSubAreas = new();
+
+    private int selectedAreaId = 0;
+    private int selectedSubAreaId = 0;
+    private string searchTerm = "";
+    private bool isLoading = false;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (IsOpen)
+        {
+            areas = await AreaService.GetAllAreasAsync();
+            allSubAreas = await AreaService.GetSubAreasAsync();
+            UpdateSubAreas();
+            await LoadFormsAsync();
+        }
+    }
+
+    private void UpdateSubAreas()
+    {
+        if (selectedAreaId > 0)
+        {
+            filteredSubAreas = allSubAreas.Where(s => s.AreaId == selectedAreaId).ToList();
+        }
+        else
+        {
+            filteredSubAreas = allSubAreas.ToList();
+        }
+    }
+
+    private async Task OnAreaFilterChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var val))
+        {
+            selectedAreaId = val;
+            selectedSubAreaId = 0;
+            UpdateSubAreas();
+            await LoadFormsAsync();
+        }
+    }
+
+    private async Task OnSubAreaFilterChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var val))
+        {
+            selectedSubAreaId = val;
+            await LoadFormsAsync();
+        }
+    }
+
+    private async Task LoadFormsAsync()
+    {
+        isLoading = true;
+        try
+        {
+            forms = await BiometricService.GetFormsForBulkPrintAsync(
+                selectedAreaId > 0 ? selectedAreaId : null,
+                selectedSubAreaId > 0 ? selectedSubAreaId : null,
+                string.IsNullOrWhiteSpace(searchTerm) ? null : searchTerm
+            );
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task PrintAll()
+    {
+        await JS.InvokeVoidAsync("window.print");
+    }
+
+    private async Task Close()
+    {
+        await OnClosed.InvokeAsync();
+    }
+}

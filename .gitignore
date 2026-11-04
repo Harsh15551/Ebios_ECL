@@ -16,7 +16,16 @@ appsettings.Local.json
 appsettings.Production.json
 appsettings.*.local.json
 
-# 3. Build Results & Artifacts
+# 3. Biometric & Personnel Storage (CRITICAL - PRIVACY & DATA PROTECTION)
+storage/
+storage/**
+scratch/
+scratch/**
+scratch_photos/
+scratch_photos/**
+bulk_regularization_*.csv
+
+# 4. Build Results & Artifacts
 [Bb]in/
 [Oo]bj/
 [Ll]og/

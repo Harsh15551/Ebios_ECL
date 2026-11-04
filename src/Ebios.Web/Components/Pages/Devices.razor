@@ -90,7 +90,6 @@ else
                         <th style="width: 110px;">Gate</th>
                         <th style="width: 140px;">Hardware Type</th>
                         <th style="width: 150px;">Biometric Sync</th>
-                        <th style="width: 100px;">Status</th>
                         <th style="width: 140px;" class="text-end">Actions</th>
                     </tr>
                 </thead>
@@ -98,7 +97,7 @@ else
                     @if (!FilteredDevices.Any())
                     {
                         <tr>
-                            <td colspan="8" class="text-center py-4 text-muted">
+                            <td colspan="7" class="text-center py-4 text-muted">
                                 No biometric devices found matching your criteria.
                             </td>
                         </tr>
@@ -156,16 +155,6 @@ else
                                         </span>
                                     }
                                 </td>
-                                <td>
-                                    @if (dev.IsActive)
-                                    {
-                                        <span class="badge bg-success">Active</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge bg-secondary">Disabled</span>
-                                    }
-                                </td>
                                 <td class="text-end">
                                     <button class="btn btn-sm btn-outline-warning me-1" @onclick="@(() => OpenActivateModal(dev))" title="Activate terminal with eBios">
                                         ⚡ Activate
@@ -176,9 +165,6 @@ else
                                             Retry Sync
                                         </button>
                                     }
-                                    <button class="btn btn-sm @(dev.IsActive ? "btn-outline-danger" : "btn-outline-success")" @onclick="@(() => ToggleStatusAsync(dev))">
-                                        @(dev.IsActive ? "Disable" : "Enable")
-                                    </button>
                                 </td>
                             </tr>
                         }
@@ -525,23 +511,6 @@ else
         catch (Exception ex)
         {
             errorMessage = $"Sync error: {ex.Message}";
-        }
-    }
-
-    private async Task ToggleStatusAsync(DeviceDto dev)
-    {
-        try
-        {
-            var toggled = await DeviceService.ToggleDeviceStatusAsync(dev.Id);
-            if (toggled)
-            {
-                successMessage = $"Device {dev.SerialNumber} status updated.";
-                devices = await DeviceService.GetDevicesAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            errorMessage = $"Failed to update device status: {ex.Message}";
         }
     }
 }

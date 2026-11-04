@@ -96,6 +96,74 @@ public class RosterService : IRosterService
             _context.EmployeeShiftRosters.Add(roster);
         }
 
+        // Retroactively update existing attendance summary if punches already occurred on this date
+        var existingSummary = await _context.AttendanceDailySummaries
+            .FirstOrDefaultAsync(s => s.EmpCode.ToUpper() == cleanCode && s.AttendanceDate == targetDate);
+
+        if (existingSummary != null)
+        {
+            existingSummary.ShiftId = shift.Id;
+            existingSummary.ShiftCode = shift.ShiftCode;
+            existingSummary.RosterStatus = "Assigned";
+            existingSummary.Remarks = $"Assigned to {shift.ShiftCode}";
+
+            if (existingSummary.FirstInTime.HasValue)
+            {
+                TimeSpan inTime = existingSummary.FirstInTime.Value.TimeOfDay;
+                TimeSpan permissibleLate = shift.StartTime.Add(TimeSpan.FromMinutes(shift.GraceMinutes));
+                if (inTime > permissibleLate)
+                {
+                    existingSummary.LateByMinutes = (int)(inTime - shift.StartTime).TotalMinutes;
+                }
+                else
+                {
+                    existingSummary.LateByMinutes = 0;
+                }
+
+                if (existingSummary.LastOutTime.HasValue)
+                {
+                    int totalMinutes = (int)(existingSummary.LastOutTime.Value - existingSummary.FirstInTime.Value).TotalMinutes;
+                    if (totalMinutes < 0) totalMinutes = 0;
+                    existingSummary.TotalWorkMinutes = totalMinutes;
+                    existingSummary.TotalWorkHours = Math.Round(totalMinutes / 60.0, 2);
+
+                    TimeSpan outTime = existingSummary.LastOutTime.Value.TimeOfDay;
+                    if (outTime < shift.EndTime)
+                    {
+                        existingSummary.EarlyExitMinutes = (int)(shift.EndTime - outTime).TotalMinutes;
+                    }
+                    else
+                    {
+                        existingSummary.EarlyExitMinutes = 0;
+                    }
+
+                    int stdMinutes = (int)(shift.DurationHours * 60);
+                    existingSummary.OvertimeMinutes = totalMinutes > stdMinutes ? totalMinutes - stdMinutes : 0;
+
+                    if (existingSummary.TotalWorkHours >= 14.0)
+                    {
+                        existingSummary.Status = "Double Shift";
+                    }
+                    else if (existingSummary.TotalWorkHours >= 7.5)
+                    {
+                        existingSummary.Status = existingSummary.LateByMinutes > 0 ? "Present (Late)" : "Present";
+                    }
+                    else if (existingSummary.TotalWorkHours >= 4.0)
+                    {
+                        existingSummary.Status = "Half Day";
+                    }
+                    else
+                    {
+                        existingSummary.Status = "Short Hours";
+                    }
+                }
+                else
+                {
+                    existingSummary.Status = existingSummary.LateByMinutes > 0 ? "Single Punch (Late)" : "Single Punch";
+                }
+            }
+        }
+
         await _context.SaveChangesAsync();
         return true;
     }

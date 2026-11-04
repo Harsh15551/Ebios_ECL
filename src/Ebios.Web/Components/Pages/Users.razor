@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @inject IUserService UserService
 @inject IAreaService AreaService
+@inject UserSessionService UserSession
 
 <PageTitle>ECL - User & Role Management</PageTitle>
 
@@ -81,18 +82,19 @@ else
                     <tr>
                         <th style="width: 140px;">Username</th>
                         <th>Full Name & Email</th>
-                        <th style="width: 160px;">Role</th>
+                        <th style="width: 150px;">Role</th>
                         <th>Assigned Jurisdiction</th>
-                        <th style="width: 100px;">Status</th>
-                        <th style="width: 140px;">Created On</th>
-                        <th style="width: 120px;" class="text-end">Actions</th>
+                        <th style="width: 200px;">Access Permissions</th>
+                        <th style="width: 90px;">Status</th>
+                        <th style="width: 120px;">Created On</th>
+                        <th style="width: 150px;" class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     @if (!FilteredUsers.Any())
                     {
                         <tr>
-                            <td colspan="7" class="text-center py-4 text-muted">
+                            <td colspan="8" class="text-center py-4 text-muted">
                                 No users match your filter criteria.
                             </td>
                         </tr>
@@ -146,6 +148,23 @@ else
                                     }
                                 </td>
                                 <td>
+                                    @if (user.Role == UserRole.SuperAdmin)
+                                    {
+                                        <span class="badge bg-danger-subtle text-danger border border-danger">Full HQ Authority</span>
+                                    }
+                                    else
+                                    {
+                                        <div class="d-flex flex-column gap-1">
+                                            <span class="badge @(user.CanManageEmployees ? "bg-success-subtle text-success border border-success" : "bg-warning-subtle text-dark border border-warning") text-start" style="font-size: 0.72rem;">
+                                                👤 Workers: @(user.CanManageEmployees ? "Add / Edit / Deactivate" : "View Only")
+                                            </span>
+                                            <span class="badge @(user.CanManageShifts ? "bg-success-subtle text-success border border-success" : "bg-warning-subtle text-dark border border-warning") text-start" style="font-size: 0.72rem;">
+                                                ⏰ Shifts: @(user.CanManageShifts ? "Master & Rosters" : "View Only")
+                                            </span>
+                                        </div>
+                                    }
+                                </td>
+                                <td>
                                     @if (user.IsActive)
                                     {
                                         <span class="badge bg-success">Active</span>
@@ -158,7 +177,15 @@ else
                                 <td class="text-muted small">
                                     @user.CreatedAt.ToString("dd MMM yyyy")
                                 </td>
-                                <td class="text-end">
+                                <td class="text-end text-nowrap">
+                                    @if (user.Role != UserRole.SuperAdmin)
+                                    {
+                                        <button class="btn btn-sm btn-outline-primary me-1" 
+                                                @onclick="@(() => OpenPermissionsModal(user))" 
+                                                title="Configure permissions for this manager">
+                                            🛡️ Permissions
+                                        </button>
+                                    }
                                     <button class="btn btn-sm @(user.IsActive ? "btn-outline-danger" : "btn-outline-success")" 
                                             @onclick="@(() => ToggleStatusAsync(user))"
                                             disabled="@(user.Username == "admin")"
@@ -249,6 +276,25 @@ else
                             <small class="text-muted">UPMs have restricted access strictly to their single assigned Sub-Area.</small>
                         </div>
                     }
+
+                    @if (newRole != UserRole.SuperAdmin)
+                    {
+                        <div class="card bg-light border-0 p-3 mb-3">
+                            <label class="form-label fw-bold mb-2 small text-uppercase text-secondary">Initial Permission Rights</label>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="newPermEmp" @bind="newCanManageEmployees" />
+                                <label class="form-check-label fw-semibold small" for="newPermEmp">
+                                    Can Manage Workers (Add, Edit, Deactivate)
+                                </label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="newPermShifts" @bind="newCanManageShifts" />
+                                <label class="form-check-label fw-semibold small" for="newPermShifts">
+                                    Can Manage Shifts & Rosters (Master Shifts, Bulk Upload, Assign)
+                                </label>
+                            </div>
+                        </div>
+                    }
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" @onclick="CloseCreateModal" disabled="@isSaving">Cancel</button>
@@ -261,6 +307,88 @@ else
                         else
                         {
                             <span>Create Account</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Edit User Permissions Modal -->
+@if (showPermissionsModal && permissionUser != null)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow">
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">Manager Access Control & Permissions</h5>
+                        <small class="text-muted">User: <strong>@permissionUser.FullName</strong> (@permissionUser.Username) — @permissionUser.Role</small>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="ClosePermissionsModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(permissionsModalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@permissionsModalError</div>
+                    }
+
+                    <div class="alert alert-info py-2 small mb-3">
+                        <i class="bi bi-info-circle me-1"></i> As SuperAdmin, you can grant or restrict editing privileges for this personnel manager. Unchecked options enforce <strong>View-Only</strong> access.
+                    </div>
+
+                    <!-- Worker / Employee Management Permission -->
+                    <div class="card mb-3 p-3 border @(editCanManageEmployees ? "border-success bg-success-subtle bg-opacity-10" : "border-secondary")">
+                        <div class="form-check form-switch mb-1">
+                            <input class="form-check-input" type="checkbox" role="switch" id="switchEmp" @bind="editCanManageEmployees" />
+                            <label class="form-check-label fw-bold" for="switchEmp">
+                                👤 Colliery Workers & Personnel
+                            </label>
+                        </div>
+                        <div class="small text-muted ms-4">
+                            @if (editCanManageEmployees)
+                            {
+                                <span class="text-success fw-semibold">✓ Full Access:</span> <span>Can onboard new workers, edit employee details/locations, retry eBios sync, and activate/deactivate accounts.</span>
+                            }
+                            else
+                            {
+                                <span class="text-warning-emphasis fw-semibold">🔒 View Only:</span> <span>Can view worker lists and audit logs. Adding, editing, and deactivating are locked.</span>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Shift & Roster Management Permission -->
+                    <div class="card p-3 border @(editCanManageShifts ? "border-success bg-success-subtle bg-opacity-10" : "border-secondary")">
+                        <div class="form-check form-switch mb-1">
+                            <input class="form-check-input" type="checkbox" role="switch" id="switchShifts" @bind="editCanManageShifts" />
+                            <label class="form-check-label fw-bold" for="switchShifts">
+                                ⏰ Master Shifts & Daily Worker Rosters
+                            </label>
+                        </div>
+                        <div class="small text-muted ms-4">
+                            @if (editCanManageShifts)
+                            {
+                                <span class="text-success fw-semibold">✓ Full Access:</span> <span>Can create master shifts, perform bulk Excel/CSV roster uploads, and assign/change daily shift schedules.</span>
+                            }
+                            else
+                            {
+                                <span class="text-warning-emphasis fw-semibold">🔒 View Only:</span> <span>Can view master shift timings and daily worker schedules. Shift editing and roster imports are locked.</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="ClosePermissionsModal" disabled="@isSavingPermissions">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SavePermissionsAsync" disabled="@isSavingPermissions">
+                        @if (isSavingPermissions)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Saving Permissions...</span>
+                        }
+                        else
+                        {
+                            <span>Save Permissions</span>
                         }
                     </button>
                 </div>
@@ -294,6 +422,16 @@ else
     private UserRole newRole = UserRole.AreaPersonnelManager;
     private int newAreaId = 0;
     private int newSubAreaId = 0;
+    private bool newCanManageEmployees = true;
+    private bool newCanManageShifts = true;
+
+    // Permissions Modal state
+    private bool showPermissionsModal = false;
+    private bool isSavingPermissions = false;
+    private string? permissionsModalError;
+    private UserDto? permissionUser;
+    private bool editCanManageEmployees = true;
+    private bool editCanManageShifts = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -351,6 +489,8 @@ else
         newRole = UserRole.AreaPersonnelManager;
         newAreaId = areas.FirstOrDefault()?.Id ?? 0;
         newSubAreaId = subAreas.FirstOrDefault()?.Id ?? 0;
+        newCanManageEmployees = true;
+        newCanManageShifts = true;
         modalError = null;
         showCreateModal = true;
     }
@@ -370,6 +510,70 @@ else
         else if (newRole == UserRole.UnitPersonnelManager && newSubAreaId == 0)
         {
             newSubAreaId = subAreas.FirstOrDefault()?.Id ?? 0;
+        }
+    }
+
+    private void OpenPermissionsModal(UserDto user)
+    {
+        permissionUser = user;
+        editCanManageEmployees = user.CanManageEmployees;
+        editCanManageShifts = user.CanManageShifts;
+        permissionsModalError = null;
+        showPermissionsModal = true;
+    }
+
+    private void ClosePermissionsModal()
+    {
+        showPermissionsModal = false;
+        permissionUser = null;
+        permissionsModalError = null;
+    }
+
+    private async Task SavePermissionsAsync()
+    {
+        if (permissionUser == null) return;
+
+        isSavingPermissions = true;
+        permissionsModalError = null;
+        try
+        {
+            var updateDto = new UpdateUserPermissionsDto(
+                permissionUser.Id,
+                editCanManageEmployees,
+                editCanManageShifts
+            );
+
+            var ok = await UserService.UpdateUserPermissionsAsync(updateDto);
+            if (ok)
+            {
+                successMessage = $"Permissions updated successfully for '{permissionUser.FullName}' ({permissionUser.Username}).";
+
+                // If the updated user is currently logged in, update UserSession immediately
+                if (UserSession.CurrentUser?.Id == permissionUser.Id)
+                {
+                    var updatedCurrentUser = await UserService.GetUserByIdAsync(permissionUser.Id);
+                    if (updatedCurrentUser != null)
+                    {
+                        UserSession.SetCurrentUser(updatedCurrentUser);
+                    }
+                }
+
+                showPermissionsModal = false;
+                permissionUser = null;
+                users = await UserService.GetUsersAsync();
+            }
+            else
+            {
+                permissionsModalError = "Failed to update user permissions.";
+            }
+        }
+        catch (Exception ex)
+        {
+            permissionsModalError = ex.Message;
+        }
+        finally
+        {
+            isSavingPermissions = false;
         }
     }
 
@@ -423,7 +627,9 @@ else
                 newPassword,
                 newRole,
                 newRole == UserRole.AreaPersonnelManager ? newAreaId : null,
-                newRole == UserRole.UnitPersonnelManager ? newSubAreaId : null
+                newRole == UserRole.UnitPersonnelManager ? newSubAreaId : null,
+                newCanManageEmployees,
+                newCanManageShifts
             );
 
             var created = await UserService.CreateUserAsync(dto);

@@ -21,6 +21,10 @@ public class UserSessionService
     public string? CurrentSubAreaName => CurrentUser?.SubAreaName;
     public string CurrentFullName => CurrentUser?.FullName ?? "Guest";
 
+    // Granular RBAC Permissions (Configured by SuperAdmin)
+    public bool CanManageEmployees => IsSuperAdmin || (CurrentUser?.CanManageEmployees ?? false);
+    public bool CanManageShifts => IsSuperAdmin || (CurrentUser?.CanManageShifts ?? false);
+
     // Persist Attendance Date Range across navigations and tabs
     private static DateTime _persistedFromDate = DateTime.Today.AddDays(-7);
     private static DateTime _persistedToDate = DateTime.Today;

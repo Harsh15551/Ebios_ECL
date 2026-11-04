@@ -14,7 +14,9 @@ public record UserDto(
     string? SubAreaName,
     bool TwoFactorEnabled,
     bool IsActive,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    bool CanManageEmployees = true,
+    bool CanManageShifts = true
 );
 
 public record CreateUserDto(
@@ -24,7 +26,15 @@ public record CreateUserDto(
     string Password,
     UserRole Role,
     int? AreaId = null,
-    int? SubAreaId = null
+    int? SubAreaId = null,
+    bool CanManageEmployees = true,
+    bool CanManageShifts = true
+);
+
+public record UpdateUserPermissionsDto(
+    int UserId,
+    bool CanManageEmployees,
+    bool CanManageShifts
 );
 
 public record LoginDto(

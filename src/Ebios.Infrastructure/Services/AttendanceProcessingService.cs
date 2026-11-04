@@ -18,7 +18,12 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         _logger = logger;
     }
 
-    public async Task ProcessPunchIntoMusterRollAsync(AttendanceLog punch)
+    public Task ProcessPunchIntoMusterRollAsync(AttendanceLog punch)
+    {
+        return ProcessPunchIntoMusterRollAsync(punch, null);
+    }
+
+    public async Task ProcessPunchIntoMusterRollAsync(AttendanceLog punch, List<ShiftMaster>? cachedShifts)
     {
         if (punch == null || string.IsNullOrWhiteSpace(punch.EmpCode)) return;
 
@@ -27,40 +32,41 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         TimeSpan punchTimeOfDay = punchTime.TimeOfDay;
         DateTime punchDate = DateTime.SpecifyKind(punchTime.Date, DateTimeKind.Utc);
 
-        var shifts = await _context.ShiftMasters.AsNoTracking().Where(s => s.IsActive).ToListAsync();
+        var shifts = cachedShifts ?? await _context.ShiftMasters.AsNoTracking().Where(s => s.IsActive).ToListAsync();
 
         // 1. Check for Open Night Shift from Yesterday (22:00 to 06:00 / 21:00 to 05:00)
         DateTime yesterdayDate = punchDate.AddDays(-1);
         var yesterdayNightSummary = await _context.AttendanceDailySummaries
-            .Include(s => s.Shift)
             .FirstOrDefaultAsync(s => s.EmpCode.ToUpper() == cleanCode && 
                                       s.AttendanceDate == yesterdayDate && 
-                                      s.Shift != null && s.Shift.IsNightShift && 
+                                      s.ShiftId != null && 
                                       s.LastOutTime == null);
 
-        if (yesterdayNightSummary != null && yesterdayNightSummary.Shift != null)
+        if (yesterdayNightSummary != null)
         {
-            var nightShift = yesterdayNightSummary.Shift;
-            // Does this punch fall in the night shift OUT window (e.g. 05:00 to 09:00)?
-            bool isInNightOutWindow = (punchTimeOfDay >= nightShift.OutWindowStart && punchTimeOfDay <= nightShift.OutWindowEnd) ||
-                                      (punchTime > yesterdayNightSummary.FirstInTime?.AddHours(4)); // Fallback: At least 4 hrs after entry
+            var nightShift = shifts.FirstOrDefault(s => s.Id == yesterdayNightSummary.ShiftId) 
+                          ?? shifts.FirstOrDefault(s => s.ShiftCode == yesterdayNightSummary.ShiftCode);
 
-            if (isInNightOutWindow)
+            if (nightShift != null && nightShift.IsNightShift)
             {
-                // This is the EXIT of yesterday's night shift!
-                yesterdayNightSummary.LastOutTime = punchTime;
-                yesterdayNightSummary.OutSerialNumber = punch.SerialNumber;
-                yesterdayNightSummary.OutDeviceName = punch.DeviceName;
-                CalculateSummaryMetrics(yesterdayNightSummary, nightShift);
-                await _context.SaveChangesAsync();
-                _logger.LogInformation("Matched exit punch for night shift on {Date} for {Code} at {Machine}.", yesterdayDate, cleanCode, punch.DeviceName);
-                return;
+                // Any subsequent morning punch within 14 hours of entry is the exit of yesterday's night shift
+                if (punchTime > yesterdayNightSummary.FirstInTime && punchTime <= yesterdayNightSummary.FirstInTime.Value.AddHours(14))
+                {
+                    // This is the EXIT of yesterday's night shift!
+                    yesterdayNightSummary.LastOutTime = punchTime;
+                    yesterdayNightSummary.OutSerialNumber = punch.SerialNumber;
+                    yesterdayNightSummary.OutDeviceName = punch.DeviceName;
+                    yesterdayNightSummary.Shift = null;
+                    CalculateSummaryMetrics(yesterdayNightSummary, nightShift);
+                    await _context.SaveChangesAsync();
+                    _logger.LogInformation("Matched exit punch for night shift on {Date} for {Code} at {Machine}.", yesterdayDate, cleanCode, punch.DeviceName);
+                    return;
+                }
             }
         }
 
         // 2. Check for Existing Summary on Today's Date
         var todaySummary = await _context.AttendanceDailySummaries
-            .Include(s => s.Shift)
             .FirstOrDefaultAsync(s => s.EmpCode.ToUpper() == cleanCode && s.AttendanceDate == punchDate);
 
         var existingEmp = punch.Employee ?? await _context.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.EmpCode.ToUpper() == cleanCode);
@@ -71,18 +77,43 @@ public class AttendanceProcessingService : IAttendanceProcessingService
 
         if (todaySummary != null)
         {
-            var shift = todaySummary.Shift ?? shifts.FirstOrDefault(s => s.ShiftCode == todaySummary.ShiftCode);
+            // Requirement 16: If this summary has been manually regularized by an authorized manager,
+            // preserve the manual timing and audit trail. Do not overwrite with automated turnstile metrics.
+            if (todaySummary.IsManuallyCorrected)
+            {
+                if (isEmployeeKnown && (!todaySummary.IsVerified || todaySummary.EmployeeId == null))
+                {
+                    todaySummary.EmployeeId = resolvedEmpId;
+                    todaySummary.EmployeeName = empDisplayName;
+                    todaySummary.Designation = existingEmp?.Designation;
+                    todaySummary.IsVerified = true;
+                    await _context.SaveChangesAsync();
+                }
+                return;
+            }
+
+            var shift = shifts.FirstOrDefault(s => s.Id == todaySummary.ShiftId) 
+                     ?? shifts.FirstOrDefault(s => s.ShiftCode == todaySummary.ShiftCode);
 
             // Update employee metadata if newly identified
-            if (isEmployeeKnown && (!todaySummary.IsVerified || todaySummary.EmployeeId == null))
+            if (isEmployeeKnown)
             {
-                todaySummary.EmployeeId = resolvedEmpId;
-                todaySummary.EmployeeName = empDisplayName;
-                todaySummary.IsVerified = true;
-                todaySummary.IsFlagged = false;
-                if (todaySummary.Remarks != null && todaySummary.Remarks.Contains("Flagged"))
+                if (existingEmp?.IsHigherAuthority == true)
                 {
-                    todaySummary.Remarks = todaySummary.RosterStatus == "Auto-Matched" ? $"Auto-matched to {todaySummary.ShiftCode}" : null;
+                    todaySummary.IsHigherAuthority = true;
+                }
+
+                if (!todaySummary.IsVerified || todaySummary.EmployeeId == null)
+                {
+                    todaySummary.EmployeeId = resolvedEmpId;
+                    todaySummary.EmployeeName = empDisplayName;
+                    todaySummary.Designation = existingEmp?.Designation;
+                    todaySummary.IsVerified = true;
+                    todaySummary.IsFlagged = false;
+                    if (todaySummary.Remarks != null && todaySummary.Remarks.Contains("Flagged"))
+                    {
+                        todaySummary.Remarks = todaySummary.RosterStatus == "Auto-Matched" ? $"Auto-matched to {todaySummary.ShiftCode}" : null;
+                    }
                 }
             }
 
@@ -98,6 +129,23 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 todaySummary.OutSerialNumber = punch.SerialNumber;
                 todaySummary.OutDeviceName = punch.DeviceName;
 
+                // If shift was auto-matched, re-resolve shift now that both entry and exit punches are known!
+                if (todaySummary.RosterStatus == "Auto-Matched" && shifts.Any())
+                {
+                    var bestShift = ResolveShiftForPunch(todaySummary.FirstInTime.Value.TimeOfDay, shifts, todaySummary.LastOutTime.Value.TimeOfDay);
+                    if (bestShift != null)
+                    {
+                        todaySummary.ShiftId = bestShift.Id;
+                        todaySummary.ShiftCode = bestShift.ShiftCode;
+                        todaySummary.Shift = null;
+                        shift = bestShift;
+                        if (todaySummary.Remarks != null && todaySummary.Remarks.StartsWith("Auto-matched"))
+                        {
+                            todaySummary.Remarks = $"Auto-matched to {bestShift.ShiftCode}";
+                        }
+                    }
+                }
+
                 if (shift != null)
                 {
                     CalculateSummaryMetrics(todaySummary, shift);
@@ -109,6 +157,22 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 todaySummary.FirstInTime = punchTime;
                 todaySummary.InSerialNumber = punch.SerialNumber;
                 todaySummary.InDeviceName = punch.DeviceName;
+
+                if (todaySummary.RosterStatus == "Auto-Matched" && shifts.Any())
+                {
+                    var bestShift = ResolveShiftForPunch(todaySummary.FirstInTime.Value.TimeOfDay, shifts, todaySummary.LastOutTime?.TimeOfDay);
+                    if (bestShift != null)
+                    {
+                        todaySummary.ShiftId = bestShift.Id;
+                        todaySummary.ShiftCode = bestShift.ShiftCode;
+                        todaySummary.Shift = null;
+                        shift = bestShift;
+                        if (todaySummary.Remarks != null && todaySummary.Remarks.StartsWith("Auto-matched"))
+                        {
+                            todaySummary.Remarks = $"Auto-matched to {bestShift.ShiftCode}";
+                        }
+                    }
+                }
 
                 if (shift != null)
                 {
@@ -124,36 +188,32 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         // 3. Brand New Attendance Day - Resolve Shift
         // Step A: Check assigned roster
         var roster = await _context.EmployeeShiftRosters
-            .Include(r => r.Shift)
+            .AsNoTracking()
             .FirstOrDefaultAsync(r => r.EmpCode.ToUpper() == cleanCode && r.RosterDate == punchDate);
 
-        ShiftMaster? resolvedShift = roster?.Shift;
+        ShiftMaster? resolvedShift = roster != null
+            ? shifts.FirstOrDefault(s => s.Id == roster.ShiftId) ?? shifts.FirstOrDefault(s => s.ShiftCode == roster.ShiftCode)
+            : null;
         string rosterStatus = "Assigned";
 
-        // Step B: If no roster assigned, auto-detect from Shift Windows
-        if (resolvedShift == null)
+        // Step B: If no roster assigned, auto-detect using employee-favorable window [StartTime - 35m, StartTime + 90m]
+        if (resolvedShift == null && shifts.Any())
         {
             rosterStatus = "Auto-Matched";
-            // Check if punch falls in InWindow
-            resolvedShift = shifts.FirstOrDefault(s => punchTimeOfDay >= s.InWindowStart && punchTimeOfDay <= s.InWindowEnd);
-
-            if (resolvedShift == null)
-            {
-                // Fallback to closest start time
-                resolvedShift = shifts
-                    .OrderBy(s => Math.Abs((s.StartTime - punchTimeOfDay).TotalMinutes))
-                    .FirstOrDefault();
-            }
+            resolvedShift = ResolveShiftForPunch(punchTimeOfDay, shifts);
         }
 
         resolvedShift ??= shifts.FirstOrDefault(s => s.ShiftCode == "General") ?? shifts.FirstOrDefault();
 
         // 4. Assemble New Summary Record
+        bool isHigherAuth = existingEmp?.IsHigherAuthority == true;
+
         var newSummary = new AttendanceDailySummary
         {
             AttendanceDate = punchDate,
             EmpCode = cleanCode,
             EmployeeName = empDisplayName,
+            Designation = existingEmp?.Designation,
             EmployeeId = resolvedEmpId,
             SubAreaId = punch.SubAreaId ?? existingEmp?.SubAreaId,
             ShiftId = resolvedShift?.Id,
@@ -161,7 +221,8 @@ public class AttendanceProcessingService : IAttendanceProcessingService
             FirstInTime = punchTime,
             InSerialNumber = punch.SerialNumber,
             InDeviceName = punch.DeviceName,
-            Status = "Single Punch",
+            IsHigherAuthority = isHigherAuth,
+            Status = isHigherAuth ? "Present" : "Single Punch",
             RosterStatus = rosterStatus,
             IsVerified = isEmployeeKnown,
             IsFlagged = !isEmployeeKnown,
@@ -170,14 +231,50 @@ public class AttendanceProcessingService : IAttendanceProcessingService
             UpdatedAt = DateTime.UtcNow
         };
 
-        if (resolvedShift != null)
+        if (isHigherAuth)
         {
-            // Evaluate Late Entry
-            TimeSpan permissibleLate = resolvedShift.StartTime.Add(TimeSpan.FromMinutes(resolvedShift.GraceMinutes));
-            if (punchTimeOfDay > permissibleLate)
+            newSummary.Status = "Present";
+            newSummary.TotalWorkHours = resolvedShift?.DurationHours ?? 8.0;
+            newSummary.TotalWorkMinutes = (int)(newSummary.TotalWorkHours * 60);
+            newSummary.LateByMinutes = 0;
+            newSummary.EarlyInMinutes = 0;
+            newSummary.EarlyExitMinutes = 0;
+            newSummary.OvertimeMinutes = 0;
+        }
+        else if (resolvedShift != null)
+        {
+            double offset = GetCircularOffsetMinutes(punchTimeOfDay, resolvedShift.StartTime);
+            int grace = resolvedShift.GraceMinutes > 0 ? resolvedShift.GraceMinutes : 30;
+
+            if (offset <= grace)
             {
-                newSummary.LateByMinutes = (int)(punchTimeOfDay - resolvedShift.StartTime).TotalMinutes;
+                newSummary.LateByMinutes = 0;
+            }
+            else
+            {
+                newSummary.LateByMinutes = (int)Math.Round(offset);
+            }
+
+            if (offset < -30)
+            {
+                newSummary.EarlyInMinutes = (int)Math.Round(-30 - offset);
+            }
+            else
+            {
+                newSummary.EarlyInMinutes = 0;
+            }
+
+            if (newSummary.LateByMinutes > 0)
+            {
                 newSummary.Status = "Single Punch (Late)";
+            }
+            else if (newSummary.EarlyInMinutes > 0)
+            {
+                newSummary.Status = "Single Punch (Early)";
+            }
+            else
+            {
+                newSummary.Status = "Single Punch";
             }
         }
 
@@ -196,43 +293,51 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         summary.TotalWorkMinutes = totalMinutes;
         summary.TotalWorkHours = Math.Round(totalMinutes / 60.0, 2);
 
-        // Evaluate Early Entry / Late Entry
-        TimeSpan inTimeOfDay = summary.FirstInTime.Value.TimeOfDay;
-        TimeSpan permissibleLate = shift.StartTime.Add(TimeSpan.FromMinutes(shift.GraceMinutes));
-        if (inTimeOfDay > permissibleLate)
+        // For Higher Authorities, record actual in/out punches, but always mark clean 'Present' with 0 timing penalties
+        if (summary.IsHigherAuthority)
         {
-            summary.LateByMinutes = (int)(inTimeOfDay - shift.StartTime).TotalMinutes;
+            summary.Status = "Present";
+            summary.LateByMinutes = 0;
+            summary.EarlyInMinutes = 0;
+            summary.EarlyExitMinutes = 0;
+            summary.OvertimeMinutes = 0;
+            return;
         }
-        else
+
+        // Evaluate Early Entry / Late Entry:
+        // Reporting window: StartTime - 30 minutes to StartTime + GraceMinutes (30 mins)
+        TimeSpan inTimeOfDay = summary.FirstInTime.Value.TimeOfDay;
+        double inOffset = GetCircularOffsetMinutes(inTimeOfDay, shift.StartTime);
+        int grace = shift.GraceMinutes > 0 ? shift.GraceMinutes : 30;
+
+        if (inOffset <= grace)
         {
             summary.LateByMinutes = 0;
         }
-
-        // Evaluate Early Exit (No Grace Period on Exit)
-        if (!shift.IsNightShift)
+        else
         {
-            TimeSpan outTimeOfDay = summary.LastOutTime.Value.TimeOfDay;
-            if (outTimeOfDay < shift.EndTime)
-            {
-                summary.EarlyExitMinutes = (int)(shift.EndTime - outTimeOfDay).TotalMinutes;
-            }
-            else
-            {
-                summary.EarlyExitMinutes = 0;
-            }
+            summary.LateByMinutes = (int)Math.Round(inOffset);
+        }
+
+        if (inOffset < -30)
+        {
+            summary.EarlyInMinutes = (int)Math.Round(-30 - inOffset);
         }
         else
         {
-            // Night Shift: End time is next morning
-            TimeSpan outTimeOfDay = summary.LastOutTime.Value.TimeOfDay;
-            if (outTimeOfDay < shift.EndTime)
-            {
-                summary.EarlyExitMinutes = (int)(shift.EndTime - outTimeOfDay).TotalMinutes;
-            }
-            else
-            {
-                summary.EarlyExitMinutes = 0;
-            }
+            summary.EarlyInMinutes = 0;
+        }
+
+        // Evaluate Early Exit (No artificial OutWindow restrictions - measured strictly against scheduled Shift EndTime)
+        TimeSpan outTimeOfDay = summary.LastOutTime.Value.TimeOfDay;
+        double exitOffset = GetCircularOffsetMinutes(outTimeOfDay, shift.EndTime);
+        if (exitOffset < 0)
+        {
+            summary.EarlyExitMinutes = (int)Math.Round(-exitOffset);
+        }
+        else
+        {
+            summary.EarlyExitMinutes = 0;
         }
 
         // Evaluate Overtime
@@ -254,7 +359,12 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         }
         else if (summary.TotalWorkHours >= 7.5)
         {
-            summary.Status = summary.LateByMinutes > 0 ? "Present (Late)" : "Present";
+            if (summary.LateByMinutes > 0)
+                summary.Status = "Present (Late)";
+            else if (summary.EarlyInMinutes > 0)
+                summary.Status = "Present (Early)";
+            else
+                summary.Status = "Present";
         }
         else if (summary.TotalWorkHours >= 4.0)
         {
@@ -272,8 +382,9 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         var toUtc = DateTime.SpecifyKind(toDate.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
 
         // Remove existing daily summaries for this date range so they are freshly calculated from raw punches
+        // REQUIREMENT 16: Exclude IsManuallyCorrected records so approved manual regularizations are NEVER wiped!
         var existingSummariesQuery = _context.AttendanceDailySummaries
-            .Where(s => s.AttendanceDate >= fromUtc && s.AttendanceDate <= toUtc);
+            .Where(s => s.AttendanceDate >= fromUtc && s.AttendanceDate <= toUtc && !s.IsManuallyCorrected);
 
         if (subAreaId.HasValue && subAreaId.Value > 0)
         {
@@ -299,11 +410,12 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         }
 
         var punches = await query.OrderBy(l => l.LogDate).ToListAsync();
+        var allShifts = await _context.ShiftMasters.AsNoTracking().Where(s => s.IsActive).ToListAsync();
         int count = 0;
 
         foreach (var p in punches)
         {
-            await ProcessPunchIntoMusterRollAsync(p);
+            await ProcessPunchIntoMusterRollAsync(p, allShifts);
             count++;
         }
 
@@ -382,6 +494,7 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 s.AttendanceDate,
                 s.EmpCode,
                 s.Employee != null ? s.Employee.FullName : s.EmployeeName,
+                s.Designation ?? (s.Employee != null ? s.Employee.Designation : "Colliery Worker"),
                 s.EmployeeId,
                 s.SubAreaId,
                 s.SubArea != null ? s.SubArea.SubAreaName : "—",
@@ -398,12 +511,19 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 s.TotalWorkHours,
                 s.OvertimeMinutes,
                 s.LateByMinutes,
+                s.EarlyInMinutes,
                 s.EarlyExitMinutes,
                 s.Status,
                 s.RosterStatus,
                 s.Remarks,
                 s.IsVerified,
                 s.IsFlagged,
+                s.IsHigherAuthority || (s.Employee != null && s.Employee.IsHigherAuthority),
+                s.IsManuallyCorrected,
+                s.CorrectionReason,
+                s.CorrectedBy,
+                s.CorrectedAt,
+                s.IsSyncedToSap,
                 s.CreatedAt,
                 s.UpdatedAt
             ))
@@ -439,6 +559,432 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         int singlePunch = list.Count(s => s.Status.StartsWith("Single Punch"));
 
         return new MusterRollKpiDto(total, present, late, early, doubleShift, singlePunch);
+    }
+
+    public async Task<(bool Success, string Message)> RegularizeAttendanceAsync(RegularizeAttendanceDto dto)
+    {
+        var summary = await _context.AttendanceDailySummaries
+            .Include(s => s.Employee)
+            .FirstOrDefaultAsync(s => s.Id == dto.SummaryId);
+
+        if (summary == null)
+        {
+            return (false, "Attendance record not found.");
+        }
+
+        if (dto.InTime.HasValue)
+        {
+            summary.FirstInTime = DateTime.SpecifyKind(dto.InTime.Value, DateTimeKind.Utc);
+            if (string.IsNullOrEmpty(summary.InSerialNumber) || summary.InSerialNumber == "MANUAL")
+            {
+                summary.InSerialNumber = "MANUAL";
+                summary.InDeviceName = "Manual Regularization";
+            }
+        }
+
+        if (dto.OutTime.HasValue)
+        {
+            summary.LastOutTime = DateTime.SpecifyKind(dto.OutTime.Value, DateTimeKind.Utc);
+            if (string.IsNullOrEmpty(summary.OutSerialNumber) || summary.OutSerialNumber == "MANUAL")
+            {
+                summary.OutSerialNumber = "MANUAL";
+                summary.OutDeviceName = "Manual Regularization";
+            }
+        }
+
+        summary.IsManuallyCorrected = true;
+        summary.CorrectionReason = !string.IsNullOrWhiteSpace(dto.Reason) ? dto.Reason.Trim() : "Manual Administrative Correction";
+        summary.CorrectedBy = dto.CorrectedBy;
+        summary.CorrectedAt = DateTime.UtcNow;
+        summary.IsSyncedToSap = false;
+        summary.UpdatedAt = DateTime.UtcNow;
+
+        // If manager selected a different shift, update the shift mapping
+        ShiftMaster? shift = null;
+        if (!string.IsNullOrWhiteSpace(dto.ShiftCode) && !dto.ShiftCode.Equals(summary.ShiftCode, StringComparison.OrdinalIgnoreCase))
+        {
+            var newShift = await _context.ShiftMasters.AsNoTracking().FirstOrDefaultAsync(s => s.ShiftCode == dto.ShiftCode);
+            if (newShift != null)
+            {
+                summary.ShiftId = newShift.Id;
+                summary.ShiftCode = newShift.ShiftCode;
+                summary.Shift = null;
+                summary.RosterStatus = "Manual-Overridden";
+                shift = newShift;
+            }
+        }
+
+        shift ??= await _context.ShiftMasters.AsNoTracking().FirstOrDefaultAsync(s => s.ShiftCode == summary.ShiftCode);
+
+        if (summary.FirstInTime.HasValue && summary.LastOutTime.HasValue)
+        {
+            if (shift != null)
+            {
+                CalculateSummaryMetrics(summary, shift);
+            }
+            else
+            {
+                int totalMinutes = (int)(summary.LastOutTime.Value - summary.FirstInTime.Value).TotalMinutes;
+                summary.TotalWorkMinutes = Math.Max(0, totalMinutes);
+                summary.TotalWorkHours = Math.Round(summary.TotalWorkMinutes / 60.0, 2);
+                summary.Status = summary.TotalWorkHours >= 7.5 ? "Present" : "Half Day";
+            }
+
+            if (summary.Status.StartsWith("Single Punch"))
+            {
+                summary.Status = summary.TotalWorkHours >= 4.0 ? "Present" : "Half Day";
+            }
+        }
+        else if (summary.IsHigherAuthority && (summary.FirstInTime.HasValue || summary.LastOutTime.HasValue))
+        {
+            summary.Status = "Present";
+            summary.TotalWorkHours = shift?.DurationHours ?? 8.0;
+            summary.TotalWorkMinutes = (int)(summary.TotalWorkHours * 60);
+            summary.LateByMinutes = 0;
+            summary.EarlyInMinutes = 0;
+            summary.EarlyExitMinutes = 0;
+            summary.OvertimeMinutes = 0;
+        }
+
+        await _context.SaveChangesAsync();
+        _logger.LogInformation("Regularized attendance record {Id} for worker {EmpCode} by {User}. Reason: {Reason}", summary.Id, summary.EmpCode, dto.CorrectedBy, dto.Reason);
+        return (true, $"Attendance for {summary.EmpCode} on {summary.AttendanceDate:dd-MM-yyyy} regularized successfully.");
+    }
+
+    public async Task<(bool Success, string Message)> RevertToMachinePunchesAsync(int summaryId)
+    {
+        var summary = await _context.AttendanceDailySummaries
+            .Include(s => s.Employee)
+            .FirstOrDefaultAsync(s => s.Id == summaryId);
+
+        if (summary == null)
+        {
+            return (false, "Attendance record not found.");
+        }
+
+        var startOfDay = DateTime.SpecifyKind(summary.AttendanceDate.Date, DateTimeKind.Utc);
+        var endOfDay = DateTime.SpecifyKind(summary.AttendanceDate.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
+
+        var punches = await _context.AttendanceLogs
+            .Include(l => l.Device)
+            .Where(l => l.EmpCode.ToUpper() == summary.EmpCode.ToUpper() && l.LogDate >= startOfDay && l.LogDate <= endOfDay)
+            .OrderBy(l => l.LogDate)
+            .ToListAsync();
+
+        var allShifts = await _context.ShiftMasters.AsNoTracking().Where(s => s.IsActive).ToListAsync();
+        var roster = await _context.EmployeeShiftRosters
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.EmpCode.ToUpper() == summary.EmpCode.ToUpper() && r.RosterDate == startOfDay);
+
+        if (punches.Count == 0)
+        {
+            summary.FirstInTime = null;
+            summary.InSerialNumber = null;
+            summary.InDeviceName = null;
+            summary.LastOutTime = null;
+            summary.OutSerialNumber = null;
+            summary.OutDeviceName = null;
+            summary.TotalWorkMinutes = 0;
+            summary.TotalWorkHours = 0;
+            summary.LateByMinutes = 0;
+            summary.EarlyInMinutes = 0;
+            summary.EarlyExitMinutes = 0;
+            summary.OvertimeMinutes = 0;
+            summary.Status = "Absent";
+        }
+        else if (punches.Count == 1)
+        {
+            var p = punches[0];
+            summary.FirstInTime = p.LogDate;
+            summary.InSerialNumber = p.SerialNumber;
+            summary.InDeviceName = p.DeviceName;
+            summary.LastOutTime = null;
+            summary.OutSerialNumber = null;
+            summary.OutDeviceName = null;
+            summary.TotalWorkMinutes = 0;
+            summary.TotalWorkHours = 0;
+            summary.EarlyExitMinutes = 0;
+            summary.OvertimeMinutes = 0;
+
+            ShiftMaster? shift = roster != null
+                ? allShifts.FirstOrDefault(s => s.Id == roster.ShiftId) ?? allShifts.FirstOrDefault(s => s.ShiftCode == roster.ShiftCode)
+                : null;
+            if (shift != null)
+            {
+                summary.ShiftId = shift.Id;
+                summary.ShiftCode = shift.ShiftCode;
+                summary.Shift = null;
+                summary.RosterStatus = "Assigned";
+            }
+            else
+            {
+                summary.RosterStatus = "Auto-Matched";
+                shift = ResolveShiftForPunch(p.LogDate.TimeOfDay, allShifts);
+                if (shift != null)
+                {
+                    summary.ShiftId = shift.Id;
+                    summary.ShiftCode = shift.ShiftCode;
+                    summary.Shift = null;
+                }
+            }
+
+            if (summary.IsHigherAuthority)
+            {
+                summary.Status = "Present";
+                summary.LateByMinutes = 0;
+                summary.EarlyInMinutes = 0;
+            }
+            else if (shift != null)
+            {
+                double offset = GetCircularOffsetMinutes(p.LogDate.TimeOfDay, shift.StartTime);
+                int grace = shift.GraceMinutes > 0 ? shift.GraceMinutes : 30;
+                summary.LateByMinutes = offset > grace ? (int)Math.Round(offset) : 0;
+                summary.EarlyInMinutes = offset < -30 ? (int)Math.Round(-30 - offset) : 0;
+                summary.Status = summary.LateByMinutes > 0 ? "Single Punch (Late)" : (summary.EarlyInMinutes > 0 ? "Single Punch (Early)" : "Single Punch");
+            }
+            else
+            {
+                summary.Status = "Single Punch";
+                summary.LateByMinutes = 0;
+                summary.EarlyInMinutes = 0;
+            }
+        }
+        else
+        {
+            var firstP = punches.First();
+            var lastP = punches.Last();
+            summary.FirstInTime = firstP.LogDate;
+            summary.InSerialNumber = firstP.SerialNumber;
+            summary.InDeviceName = firstP.DeviceName;
+            summary.LastOutTime = lastP.LogDate;
+            summary.OutSerialNumber = lastP.SerialNumber;
+            summary.OutDeviceName = lastP.DeviceName;
+
+            ShiftMaster? shift = roster != null
+                ? allShifts.FirstOrDefault(s => s.Id == roster.ShiftId) ?? allShifts.FirstOrDefault(s => s.ShiftCode == roster.ShiftCode)
+                : null;
+            if (shift != null)
+            {
+                summary.ShiftId = shift.Id;
+                summary.ShiftCode = shift.ShiftCode;
+                summary.Shift = null;
+                summary.RosterStatus = "Assigned";
+            }
+            else
+            {
+                summary.RosterStatus = "Auto-Matched";
+                shift = ResolveShiftForPunch(firstP.LogDate.TimeOfDay, allShifts, lastP.LogDate.TimeOfDay);
+                if (shift != null)
+                {
+                    summary.ShiftId = shift.Id;
+                    summary.ShiftCode = shift.ShiftCode;
+                    summary.Shift = null;
+                }
+            }
+
+            if (shift != null)
+            {
+                CalculateSummaryMetrics(summary, shift);
+            }
+        }
+
+        summary.IsManuallyCorrected = false;
+        summary.CorrectionReason = null;
+        summary.CorrectedBy = null;
+        summary.CorrectedAt = null;
+        summary.IsSyncedToSap = false;
+        summary.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+        _logger.LogInformation("Reverted attendance record {Id} for worker {EmpCode} to machine punches.", summary.Id, summary.EmpCode);
+        return (true, $"Attendance for {summary.EmpCode} reverted to turnstile machine punches.");
+    }
+
+    public async Task<BulkRegularizeResultDto> BulkRegularizeAsync(List<BulkRegularizeEntryDto> entries, string adminUsername)
+    {
+        int successCount = 0;
+        var errors = new List<string>();
+
+        var allShifts = await _context.ShiftMasters.AsNoTracking().Where(s => s.IsActive).ToListAsync();
+
+        foreach (var entry in entries)
+        {
+            try
+            {
+                string cleanCode = entry.EmpCode.Trim().ToUpper();
+                DateTime targetDate = DateTime.SpecifyKind(entry.Date.Date, DateTimeKind.Utc);
+
+                var emp = await _context.Employees
+                    .Include(e => e.SubArea)
+                    .FirstOrDefaultAsync(e => e.EmpCode.ToUpper() == cleanCode);
+
+                var summary = await _context.AttendanceDailySummaries
+                    .FirstOrDefaultAsync(s => s.EmpCode.ToUpper() == cleanCode && s.AttendanceDate == targetDate);
+
+                if (summary == null)
+                {
+                    var roster = await _context.EmployeeShiftRosters
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(r => r.EmpCode.ToUpper() == cleanCode && r.RosterDate == targetDate);
+
+                    var shift = (roster != null ? allShifts.FirstOrDefault(s => s.Id == roster.ShiftId) ?? allShifts.FirstOrDefault(s => s.ShiftCode == roster.ShiftCode) : null)
+                             ?? allShifts.FirstOrDefault(s => s.ShiftCode == "General") 
+                             ?? allShifts.FirstOrDefault();
+
+                    summary = new AttendanceDailySummary
+                    {
+                        AttendanceDate = targetDate,
+                        EmpCode = cleanCode,
+                        EmployeeName = emp?.FullName ?? cleanCode,
+                        Designation = emp?.Designation ?? "Colliery Worker",
+                        EmployeeId = emp?.Id,
+                        SubAreaId = emp?.SubAreaId,
+                        ShiftId = shift?.Id,
+                        ShiftCode = shift?.ShiftCode ?? "General",
+                        IsHigherAuthority = emp?.IsHigherAuthority == true,
+                        IsVerified = emp != null,
+                        IsFlagged = emp == null,
+                        Status = emp?.IsHigherAuthority == true ? "Present" : "Single Punch",
+                        RosterStatus = roster != null ? "Assigned" : "Auto-Matched",
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.AttendanceDailySummaries.Add(summary);
+                }
+
+                if (entry.InTime.HasValue)
+                {
+                    summary.FirstInTime = DateTime.SpecifyKind(entry.InTime.Value, DateTimeKind.Utc);
+                    if (string.IsNullOrEmpty(summary.InSerialNumber) || summary.InSerialNumber == "MANUAL")
+                    {
+                        summary.InSerialNumber = "MANUAL";
+                        summary.InDeviceName = "Manual Regularization";
+                    }
+                }
+
+                if (entry.OutTime.HasValue)
+                {
+                    summary.LastOutTime = DateTime.SpecifyKind(entry.OutTime.Value, DateTimeKind.Utc);
+                    if (string.IsNullOrEmpty(summary.OutSerialNumber) || summary.OutSerialNumber == "MANUAL")
+                    {
+                        summary.OutSerialNumber = "MANUAL";
+                        summary.OutDeviceName = "Manual Regularization";
+                    }
+                }
+
+                summary.IsManuallyCorrected = true;
+                summary.CorrectionReason = !string.IsNullOrWhiteSpace(entry.Reason) ? entry.Reason.Trim() : "Manual Administrative Regularization";
+                summary.CorrectedBy = adminUsername;
+                summary.CorrectedAt = DateTime.UtcNow;
+                summary.IsSyncedToSap = false;
+                summary.UpdatedAt = DateTime.UtcNow;
+
+                if (!string.IsNullOrWhiteSpace(entry.ShiftCode))
+                {
+                    var newShift = allShifts.FirstOrDefault(s => s.ShiftCode.Equals(entry.ShiftCode.Trim(), StringComparison.OrdinalIgnoreCase));
+                    if (newShift != null)
+                    {
+                        summary.ShiftId = newShift.Id;
+                        summary.ShiftCode = newShift.ShiftCode;
+                        summary.Shift = null;
+                        summary.RosterStatus = "Manual-Overridden";
+                    }
+                }
+
+                var currentShift = allShifts.FirstOrDefault(s => s.Id == summary.ShiftId) 
+                                ?? allShifts.FirstOrDefault(s => s.ShiftCode == summary.ShiftCode);
+                if (summary.FirstInTime.HasValue && summary.LastOutTime.HasValue && currentShift != null)
+                {
+                    CalculateSummaryMetrics(summary, currentShift);
+                    if (summary.Status.StartsWith("Single Punch"))
+                    {
+                        summary.Status = summary.TotalWorkHours >= 4.0 ? "Present" : "Half Day";
+                    }
+                }
+                else if (summary.IsHigherAuthority && (summary.FirstInTime.HasValue || summary.LastOutTime.HasValue))
+                {
+                    summary.Status = "Present";
+                }
+
+                successCount++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Row {entry.EmpCode} ({entry.Date:dd-MM-yyyy}): {ex.Message}");
+            }
+        }
+
+        if (successCount > 0)
+        {
+            await _context.SaveChangesAsync();
+        }
+
+        return new BulkRegularizeResultDto(successCount, entries.Count, errors);
+    }
+
+    public static double GetCircularOffsetMinutes(TimeSpan time, TimeSpan referenceTime)
+    {
+        double diff = (time - referenceTime).TotalMinutes;
+        while (diff > 720) diff -= 1440;
+        while (diff < -720) diff += 1440;
+        return diff;
+    }
+
+    public static ShiftMaster? ResolveShiftForPunch(
+        TimeSpan punchTimeOfDay,
+        IEnumerable<ShiftMaster> shifts,
+        TimeSpan? outTimeOfDay = null)
+    {
+        var activeShifts = shifts.Where(s => s.IsActive).ToList();
+        if (!activeShifts.Any()) return null;
+
+        var evaluated = activeShifts.Select(s =>
+        {
+            double offset = GetCircularOffsetMinutes(punchTimeOfDay, s.StartTime);
+            // Employee-favorable window: 35 minutes before start (allowing 5m colliery gate leeway) to 90 minutes after start
+            bool inWindow = offset >= -35 && offset <= 90;
+
+            int grace = s.GraceMinutes > 0 ? s.GraceMinutes : 30;
+            int lateMinutes = offset > grace ? (int)Math.Round(offset) : 0;
+            int earlyMinutes = offset < -30 ? (int)Math.Round(-30 - offset) : 0;
+
+            double outDiff = 0;
+            if (outTimeOfDay.HasValue)
+            {
+                outDiff = Math.Abs(GetCircularOffsetMinutes(outTimeOfDay.Value, s.EndTime));
+            }
+
+            return new
+            {
+                Shift = s,
+                InWindow = inWindow,
+                LateMinutes = lateMinutes,
+                EarlyMinutes = earlyMinutes,
+                IsOnTime = lateMinutes == 0,
+                IsReportingBeforeStart = offset <= 0,
+                AbsOffset = Math.Abs(offset),
+                OutDiff = outDiff,
+                IsGeneralPreference = s.ShiftCode.StartsWith("G") || s.ShiftCode == "General"
+            };
+        }).ToList();
+
+        var candidates = evaluated.Where(e => e.InWindow).ToList();
+        if (!candidates.Any())
+        {
+            candidates = evaluated;
+        }
+
+        var best = candidates
+            .OrderBy(c => c.LateMinutes)
+            .ThenBy(c => outTimeOfDay.HasValue ? c.OutDiff : 0)
+            .ThenBy(c => c.IsOnTime ? (c.IsReportingBeforeStart ? 0 : 1) : 0)
+            .ThenBy(c => c.EarlyMinutes)
+            .ThenBy(c => c.AbsOffset)
+            .ThenBy(c => c.IsGeneralPreference ? 0 : 1)
+            .ThenBy(c => c.Shift.ShiftCode)
+            .FirstOrDefault();
+
+        return best?.Shift;
     }
 }
 

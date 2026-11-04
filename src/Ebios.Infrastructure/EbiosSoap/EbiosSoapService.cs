@@ -100,6 +100,28 @@ public class EbiosSoapService : IEbiosSoapService
         return await SendSoapRequestAsync(soapAction, xmlPayload, "UpdateEmployeeResult");
     }
 
+    public async Task<(bool success, string message)> BlockUnblockUserOnDeviceAsync(
+        string deviceSerialNumber, 
+        string employeeCode, 
+        bool blockUser)
+    {
+        string soapAction = "\"http://tempuri.org/DeviceCommand_BlockUnBlockUser\"";
+        string xmlPayload = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
+  <soap:Body>
+    <DeviceCommand_BlockUnBlockUser xmlns=""http://tempuri.org/"">
+      <UserName>{SecurityElement.Escape(_userName)}</UserName>
+      <Password>{SecurityElement.Escape(_password)}</Password>
+      <DeviceSerialNumber>{SecurityElement.Escape(deviceSerialNumber)}</DeviceSerialNumber>
+      <EmployeeCode>{SecurityElement.Escape(employeeCode)}</EmployeeCode>
+      <BlockUser>{(blockUser ? "true" : "false")}</BlockUser>
+    </DeviceCommand_BlockUnBlockUser>
+  </soap:Body>
+</soap:Envelope>";
+
+        return await SendSoapRequestAsync(soapAction, xmlPayload, "DeviceCommand_BlockUnBlockUserResult");
+    }
+
     private async Task<(bool success, string message)> SendSoapRequestAsync(string soapAction, string xmlPayload, string resultElementName)
     {
         try
