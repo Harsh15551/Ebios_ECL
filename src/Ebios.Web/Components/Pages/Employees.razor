@@ -76,7 +76,7 @@
     }
     else
     {
-        <span class="badge bg-secondary p-2">
+        <span class="badge bg-secondary p-2 d-flex align-items-center">
             <i class="bi bi-lock-fill me-1"></i> View-Only Mode
         </span>
     }
@@ -98,29 +98,6 @@
     </div>
 }
 
-@if (flaggedPunchesCount > 0)
-{
-    <div class="alert alert-warning shadow-sm d-flex align-items-center justify-content-between mb-4">
-        <div class="d-flex align-items-center">
-            <span class="fs-4 me-3">🚩</span>
-            <div>
-                <strong class="d-block">@flaggedPunchesCount Flagged Unregistered Worker Punches Detected</strong>
-                <span class="small text-muted">Workers have swiped at colliery turnstiles without an active employee master profile. Onboard them or import bulk forms to resolve.</span>
-            </div>
-        </div>
-        <div class="d-flex gap-2">
-            <a href="/attendance" class="btn btn-warning btn-sm fw-bold px-3">
-                Review in Attendance
-            </a>
-            @if (UserSession.CanManageEmployees)
-            {
-                <button class="btn btn-primary btn-sm fw-bold px-3" @onclick="OpenCreateModal">
-                    Onboard Worker
-                </button>
-            }
-        </div>
-    </div>
-}
 
 <!-- Filters Bar -->
 <div class="card shadow-sm mb-4">
@@ -150,13 +127,16 @@
             <div class="col-12 col-md-3">
                 <select class="form-select" @bind="authorityFilter">
                     <option value="all">All Personnel Categories</option>
-                    <option value="authorities">👔 Higher Authorities / Executives</option>
+                    <option value="authorities">👔 Executives Only</option>
                     <option value="workers">Colliery Workers Only</option>
                 </select>
             </div>
 
-            <div class="col-12 col-md-2 text-md-end text-muted small">
-                <strong>@FilteredEmployees.Count()</strong> of <strong>@employees.Count</strong> Workers
+            <div class="col-12 col-md-2 text-md-end text-muted small d-flex align-items-center justify-content-md-end gap-2">
+                <button class="btn btn-sm btn-outline-secondary" @onclick="LoadDataAsync" title="Refresh worker list">
+                    <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+                </button>
+                <span><strong>@FilteredEmployees.Count()</strong> of <strong>@employees.Count</strong></span>
             </div>
         </div>
     </div>
@@ -205,8 +185,8 @@ else
                                     @emp.FullName
                                     @if (emp.IsHigherAuthority)
                                     {
-                                        <span class="badge ms-1" style="background-color: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; font-size: 0.72rem;" title="Higher Authority / Executive: single-punch attendance permitted">
-                                            👔 Higher Authority
+                                        <span class="badge ms-1" style="background-color: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; font-size: 0.72rem;" title="Executive: single-punch attendance permitted">
+                                            👔 Executive
                                         </span>
                                     }
                                 </td>
@@ -252,23 +232,8 @@ else
                                     }
                                 </td>
                                 <td class="text-end text-nowrap">
-                                    <!-- View Logs Button (Always accessible) -->
-                                    <button class="btn btn-sm btn-outline-info me-1" @onclick="@(() => OpenEmployeeLogsModal(emp))" title="View worker punch logs">
-                                        📋 Logs
-                                    </button>
-
                                     @if (UserSession.CanManageEmployees)
                                     {
-                                        @if (UserSession.IsSuperAdmin || UserSession.IsAreaAdmin)
-                                        {
-                                            <button class="btn btn-sm me-1" 
-                                                    style="@(emp.IsHigherAuthority ? "color: #5b21b6; background-color: #ede9fe; border: 1px solid #c4b5fd;" : "color: #4b5563; background-color: #f3f4f6; border: 1px solid #d1d5db;")"
-                                                    @onclick="@(() => ToggleHigherAuthorityStatusAsync(emp))" 
-                                                    title="@(emp.IsHigherAuthority ? "Revoke Higher Authority status" : "Map as Higher Authority / Executive")">
-                                                @(emp.IsHigherAuthority ? "👔 Authority" : "👔 Set Authority")
-                                            </button>
-                                        }
-
                                         <!-- Biometric Registration Template Form (ECL & WEBEL) -->
                                         <button class="btn btn-sm btn-outline-primary me-1" @onclick="@(() => OpenBiometricFormModal(emp))" title="Biometric Registration Template (ECL & WEBEL)">
                                             📋 Biometric Form
@@ -427,10 +392,10 @@ else
                         <div class="form-check form-switch mb-3 p-2 bg-light rounded border">
                             <input class="form-check-input ms-0 me-2" type="checkbox" id="newHigherAuthSwitch" @bind="newIsHigherAuthority" />
                             <label class="form-check-label fw-semibold" for="newHigherAuthSwitch">
-                                👔 Higher Authority / Executive
+                                👔 Executive Personnel
                             </label>
                             <div class="form-text text-muted" style="font-size: 0.78rem;">
-                                Single-punch attendance permitted; exempt from shift timing and late marks.
+                                Single-punch attendance permitted; exempt from strict shift timing and late marks.
                             </div>
                         </div>
                     }
@@ -686,10 +651,10 @@ else
                         <div class="form-check form-switch mb-3 p-2 bg-light rounded border">
                             <input class="form-check-input ms-0 me-2" type="checkbox" id="editHigherAuthSwitch" @bind="editIsHigherAuthority" />
                             <label class="form-check-label fw-semibold" for="editHigherAuthSwitch">
-                                👔 Higher Authority / Executive
+                                👔 Executive Personnel
                             </label>
                             <div class="form-text text-muted" style="font-size: 0.78rem;">
-                                Single-punch attendance permitted; exempt from shift timing and late marks.
+                                Single-punch attendance permitted; exempt from strict shift timing and late marks.
                             </div>
                         </div>
                     }
@@ -923,7 +888,7 @@ else
                     <!-- Direct Textarea -->
                     <div class="mb-3">
                         <label class="form-label small fw-semibold">CSV / Excel Clipboard Data</label>
-                        <textarea class="form-control font-monospace small" rows="6" placeholder="EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority&#10;ECL-8001,Rajesh Kumar,Mining Sirdar,Sodepur Colliery,No&#10;ECL-8002,Sunil Mondal,Overman,Chinukuri Pit 1,No&#10;ECL-8003,Amit Banerjee,Area General Manager,Sodepur Colliery,Yes" @bind="bulkEmployeeCsvText"></textarea>
+                        <textarea class="form-control font-monospace small" rows="6" placeholder="EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority&#10;ECL-8001,Rajesh Kumar,Mining Sirdar,Pit 1 Colliery Unit,No&#10;ECL-8002,Sunil Mondal,Overman,Pit 1 Colliery Unit,No&#10;ECL-8003,Amit Banerjee,Area General Manager,Pit 1 Colliery Unit,Yes" @bind="bulkEmployeeCsvText"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer py-2">
@@ -1112,8 +1077,8 @@ else
 
 <!-- Biometric Registration Modals -->
 <BiometricFormModal IsOpen="@isBiometricModalOpen" Model="@activeBiometricForm" CurrentUser="@(UserSession.CurrentUser?.Username ?? "APM")" OnClosed="CloseBiometricFormModal" />
-<BulkBiometricModal IsOpen="@isBulkBiometricModalOpen" CurrentUser="@(UserSession.CurrentUser?.Username ?? "APM")" OnClosed="@(() => isBulkBiometricModalOpen = false)" />
-<BulkPrintBiometricModal IsOpen="@isBulkPrintModalOpen" OnClosed="@(() => isBulkPrintModalOpen = false)" />
+<BulkBiometricModal IsOpen="@isBulkBiometricModalOpen" CurrentUser="@(UserSession.CurrentUser?.Username ?? "APM")" OnClosed="CloseBulkBiometricModal" />
+<BulkPrintBiometricModal IsOpen="@isBulkPrintModalOpen" OnClosed="CloseBulkPrintModal" />
 
 @code {
     private List<EmployeeDto> employees = new();
@@ -1139,10 +1104,11 @@ else
         }
     }
 
-    private void CloseBiometricFormModal()
+    private async Task CloseBiometricFormModal()
     {
         isBiometricModalOpen = false;
         activeBiometricForm = null;
+        await LoadDataAsync();
     }
 
     private void OpenBulkBiometricModal()
@@ -1150,9 +1116,21 @@ else
         isBulkBiometricModalOpen = true;
     }
 
+    private async Task CloseBulkBiometricModal()
+    {
+        isBulkBiometricModalOpen = false;
+        await LoadDataAsync();
+    }
+
     private void OpenBulkPrintModal()
     {
         isBulkPrintModalOpen = true;
+    }
+
+    private async Task CloseBulkPrintModal()
+    {
+        isBulkPrintModalOpen = false;
+        await LoadDataAsync();
     }
 
     // Filters
@@ -1823,10 +1801,10 @@ else
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority");
-        sb.AppendLine("ECL-8001,Rajesh Kumar,Mining Sirdar,Sodepur Colliery,No");
-        sb.AppendLine("ECL-8002,Sunil Mondal,Overman,Chinukuri Pit 1,No");
-        sb.AppendLine("ECL-8003,Amit Banerjee,Area General Manager,Sodepur Colliery,Yes");
-        sb.AppendLine("ECL-8004,Pradeep Soren,Colliery Worker,Dhemomain Colliery,No");
+        sb.AppendLine("ECL-8001,Rajesh Kumar,Mining Sirdar,Pit 1 Colliery Unit,No");
+        sb.AppendLine("ECL-8002,Sunil Mondal,Overman,Pit 1 Colliery Unit,No");
+        sb.AppendLine("ECL-8003,Amit Banerjee,Area General Manager,Pit 1 Colliery Unit,Yes");
+        sb.AppendLine("ECL-8004,Pradeep Soren,Colliery Worker,Pit 2 Colliery Unit,No");
 
         string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
         string fileName = "sample_bulk_employees.csv";
@@ -1843,7 +1821,7 @@ else
 
     private void FillSampleEmployeeData()
     {
-        bulkEmployeeCsvText = "EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority\nECL-8001,Rajesh Kumar,Mining Sirdar,Sodepur Colliery,No\nECL-8002,Sunil Mondal,Overman,Chinukuri Pit 1,No\nECL-8003,Amit Banerjee,Area General Manager,Sodepur Colliery,Yes\nECL-8004,Pradeep Soren,Colliery Worker,Dhemomain Colliery,No";
+        bulkEmployeeCsvText = "EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority\nECL-8001,Rajesh Kumar,Mining Sirdar,Pit 1 Colliery Unit,No\nECL-8002,Sunil Mondal,Overman,Pit 1 Colliery Unit,No\nECL-8003,Amit Banerjee,Area General Manager,Pit 1 Colliery Unit,Yes\nECL-8004,Pradeep Soren,Colliery Worker,Pit 2 Colliery Unit,No";
     }
 
     private async Task HandleBulkEmployeeFileUpload(InputFileChangeEventArgs e)

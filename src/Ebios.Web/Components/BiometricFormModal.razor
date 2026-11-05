@@ -423,42 +423,100 @@
 }
 
 <style>
+    @@page {
+        size: A4 portrait;
+        margin: 8mm 10mm 8mm 10mm;
+    }
+
     @@media print {
-        body * {
-            visibility: hidden;
-        }
-        #printableBiometricForm, #printableBiometricForm * {
-            visibility: visible;
-        }
-        #printableBiometricForm {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            padding: 0 !important;
+        html, body {
+            height: auto !important;
+            min-height: 0 !important;
             margin: 0 !important;
+            padding: 0 !important;
+            background: #fff !important;
+            overflow: visible !important;
         }
-        .no-print {
+
+        /* Completely remove all page layout outside the modal from the print tree */
+        body > *:not(.modal) {
             display: none !important;
         }
+
+        .no-print, .no-print * {
+            display: none !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+        }
+
+        .modal-backdrop {
+            display: none !important;
+        }
+
         .modal {
             position: static !important;
+            display: block !important;
             overflow: visible !important;
-            background: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: #fff !important;
+            width: 100% !important;
+            min-height: 0 !important;
         }
+
         .modal-dialog {
             max-width: 100% !important;
+            width: 100% !important;
             margin: 0 !important;
+            padding: 0 !important;
+            transform: none !important;
         }
+
         .modal-content {
             border: none !important;
             box-shadow: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: #fff !important;
         }
+
+        .modal-header, .modal-footer {
+            display: none !important;
+        }
+
+        .modal-body {
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            background: #fff !important;
+        }
+
+        .ecl-biometric-template {
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 3mm 4mm !important;
+            border: 1.5px solid #000 !important;
+            box-sizing: border-box !important;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+
         .table {
             border-color: #000 !important;
+            margin-bottom: 0 !important;
         }
+
         .table td, .table th {
             border-color: #000 !important;
+            padding: 3px 5px !important;
+            font-size: 8.5pt !important;
+        }
+
+        .particulars-table tr, .committee-table tr, .photo-grid-table tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
         }
     }
 </style>

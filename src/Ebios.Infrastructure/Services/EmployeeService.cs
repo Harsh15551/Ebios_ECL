@@ -548,7 +548,7 @@ public class EmployeeService : IEmployeeService
         employee.IsHigherAuthority = !employee.IsHigherAuthority;
         await _context.SaveChangesAsync();
 
-        string role = employee.IsHigherAuthority ? "Higher Authority / Executive" : "General Colliery Personnel";
+        string role = employee.IsHigherAuthority ? "Executive" : "General Colliery Personnel";
         _logger.LogInformation("Updated employee {Code} authority status to: {Status}", employee.EmpCode, role);
 
         return (true, $"{employee.FullName} ({employee.EmpCode}) is now mapped as {role}.");

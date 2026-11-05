@@ -1,6 +1,5 @@
 EmpCode,FullName,Designation,CollieryUnit,IsHigherAuthority
-ECL-8001,Rajesh Kumar,Mining Sirdar,Sodepur Colliery,No
-ECL-8002,Sunil Mondal,Overman,Chinukuri Pit 1,No
-ECL-8003,Amit Banerjee,Area General Manager,Sodepur Colliery,Yes
-ECL-8004,Pradeep Soren,Colliery Worker,Dhemomain Colliery,No
-
+ECL-8001,Rajesh Kumar,Mining Sirdar,Pit 1 Colliery Unit,No
+ECL-8002,Sunil Mondal,Overman,Pit 1 Colliery Unit,No
+ECL-8003,Amit Banerjee,Area General Manager,Pit 1 Colliery Unit,Yes
+ECL-8004,Pradeep Soren,Colliery Worker,Pit 2 Colliery Unit,No

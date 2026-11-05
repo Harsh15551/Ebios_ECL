@@ -256,38 +256,80 @@
 }
 
 <style>
+    @@page {
+        size: A4 portrait;
+        margin: 8mm 10mm;
+    }
+
     @@media print {
-        body * {
-            visibility: hidden;
+        html, body {
+            height: auto !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #fff !important;
+            overflow: visible !important;
         }
-        #bulkPrintContainer, #bulkPrintContainer * {
-            visibility: visible;
-        }
-        #bulkPrintContainer {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-        }
-        .page-break-after {
-            page-break-after: always;
-            break-after: page;
-        }
-        .no-print {
+
+        /* Hide all outer document chrome outside the active modal */
+        body > *:not(.modal) {
             display: none !important;
         }
+
+        .no-print, .no-print * {
+            display: none !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+        }
+
+        .modal-backdrop {
+            display: none !important;
+        }
+
         .modal {
             position: static !important;
+            display: block !important;
             overflow: visible !important;
-            background: none !important;
-        }
-        .modal-dialog {
-            max-width: 100% !important;
+            background: transparent !important;
+            padding: 0 !important;
             margin: 0 !important;
         }
+
+        .modal-dialog {
+            max-width: 100% !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            transform: none !important;
+        }
+
         .modal-content {
             border: none !important;
             box-shadow: none !important;
+            background: transparent !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        .modal-body {
+            padding: 0 !important;
+            margin: 0 !important;
+            background: transparent !important;
+        }
+
+        #bulkPrintContainer {
+            display: block !important;
+            position: static !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+        }
+
+        .page-break-after {
+            page-break-after: always;
+            break-after: page;
         }
     }
 </style>

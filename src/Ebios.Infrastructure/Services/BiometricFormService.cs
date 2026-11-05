@@ -25,8 +25,17 @@ public class BiometricFormService : IBiometricFormService
         _ebiosSoapService = ebiosSoapService;
         _logger = logger;
 
-        // Base directory: storage/biometric_forms under application root
-        _storageBasePath = Path.Combine(Directory.GetCurrentDirectory(), "storage", "biometric_forms");
+        // Base directory: storage/biometric_forms under application root (handles running from root or web project)
+        var webStorage = Path.Combine(Directory.GetCurrentDirectory(), "src", "Ebios.Web", "storage", "biometric_forms");
+        if (Directory.Exists(Path.Combine(Directory.GetCurrentDirectory(), "src", "Ebios.Web")))
+        {
+            _storageBasePath = webStorage;
+        }
+        else
+        {
+            _storageBasePath = Path.Combine(Directory.GetCurrentDirectory(), "storage", "biometric_forms");
+        }
+
         if (!Directory.Exists(_storageBasePath))
         {
             Directory.CreateDirectory(_storageBasePath);
@@ -623,99 +632,119 @@ public class BiometricFormService : IBiometricFormService
         var result = new BulkBiometricImportResult();
         var updatedEmployees = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
-        foreach (var entry in archive.Entries)
+        var tempZipPath = Path.Combine(Path.GetTempPath(), $"ebios_bulk_photos_{Guid.NewGuid():N}.zip");
+        try
         {
-            // Skip directory entries or macOS meta files
-            if (string.IsNullOrEmpty(entry.Name) || entry.FullName.Contains("__MACOSX"))
-                continue;
-
-            result.TotalProcessed++;
-
-            try
+            // Asynchronously copy browser stream to temporary file on disk (avoids Synchronous reads not supported & supports seek)
+            using (var tempFileOut = new FileStream(tempZipPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             {
-                // Determine EmpCode and box type
-                // Examples:
-                // TSA011/aadhaar.jpg
-                // TSA011/TSA011_person.jpg
-                // TSA011_idcard.jpg
-                string empCode = "";
-                string fileName = entry.Name;
-                string fullName = entry.FullName.Replace('\\', '/');
+                await zipStream.CopyToAsync(tempFileOut);
+            }
 
-                var pathParts = fullName.Split('/');
-                if (pathParts.Length > 1 && !string.IsNullOrWhiteSpace(pathParts[0]))
+            using (var zipFs = new FileStream(tempZipPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var archive = new ZipArchive(zipFs, ZipArchiveMode.Read))
+            {
+                foreach (var entry in archive.Entries)
                 {
-                    empCode = pathParts[0].Trim();
-                }
-                else
-                {
-                    // Flat structure: TSA011_aadhaar.jpg
-                    var nameOnly = Path.GetFileNameWithoutExtension(fileName);
-                    var split = nameOnly.Split(new[] { '_', '-' }, 2);
-                    if (split.Length >= 2)
+                    // Skip directory entries or macOS meta files
+                    if (string.IsNullOrEmpty(entry.Name) || entry.FullName.Contains("__MACOSX"))
+                        continue;
+
+                    result.TotalProcessed++;
+
+                    try
                     {
-                        empCode = split[0].Trim();
+                        // Determine EmpCode and box type
+                        // Examples:
+                        // TSA011/aadhaar.jpg
+                        // TSA011/TSA011_person.jpg
+                        // TSA011_idcard.jpg
+                        string empCode = "";
+                        string fileName = entry.Name;
+                        string fullName = entry.FullName.Replace('\\', '/');
+
+                        var pathParts = fullName.Split('/');
+                        if (pathParts.Length > 1 && !string.IsNullOrWhiteSpace(pathParts[0]))
+                        {
+                            empCode = pathParts[0].Trim();
+                        }
+                        else
+                        {
+                            // Flat structure: TSA011_aadhaar.jpg
+                            var nameOnly = Path.GetFileNameWithoutExtension(fileName);
+                            var split = nameOnly.Split(new[] { '_', '-' }, 2);
+                            if (split.Length >= 2)
+                            {
+                                empCode = split[0].Trim();
+                            }
+                        }
+
+                        if (string.IsNullOrWhiteSpace(empCode))
+                        {
+                            result.FailureCount++;
+                            result.Errors.Add($"Skipped '{entry.FullName}': could not determine EmpCode from folder name or file prefix.");
+                            continue;
+                        }
+
+                        var safeEmpCode = SanitizeEmpCode(empCode);
+                        var lowerName = fileName.ToLowerInvariant();
+
+                        string? boxType = null;
+                        bool isSignedHardcopy = false;
+
+                        if (lowerName.Contains("aadhaar") || lowerName.Contains("aadhar") || lowerName.EndsWith("_1.jpg") || lowerName.EndsWith("-1.jpg"))
+                        {
+                            boxType = "aadhaar";
+                        }
+                        else if (lowerName.Contains("idcard") || lowerName.Contains("id_card") || lowerName.Contains("voter") || lowerName.Contains("pan") || lowerName.EndsWith("_2.jpg") || lowerName.EndsWith("-2.jpg"))
+                        {
+                            boxType = "idcard";
+                        }
+                        else if (lowerName.Contains("person") || lowerName.Contains("face") || lowerName.Contains("photo") || lowerName.Contains("worker") || lowerName.EndsWith("_3.jpg") || lowerName.EndsWith("-3.jpg"))
+                        {
+                            boxType = "person";
+                        }
+                        else if (lowerName.Contains("template") || lowerName.Contains("machine") || lowerName.Contains("finger") || lowerName.Contains("fp") || lowerName.EndsWith("_4.jpg") || lowerName.EndsWith("-4.jpg"))
+                        {
+                            boxType = "template";
+                        }
+                        else if (lowerName.Contains("signed") || lowerName.Contains("form") || lowerName.EndsWith(".pdf"))
+                        {
+                            isSignedHardcopy = true;
+                        }
+                        else
+                        {
+                            result.FailureCount++;
+                            result.Errors.Add($"File '{entry.FullName}': unrecognized box name. Expected aadhaar, idcard, person, template, or signed form.");
+                            continue;
+                        }
+
+                        using var entryStream = entry.Open();
+                        if (isSignedHardcopy)
+                        {
+                            await UploadSignedPhysicalFormAsync(safeEmpCode, entryStream, fileName, updatedBy);
+                        }
+                        else if (boxType != null)
+                        {
+                            await UploadPhotoAsync(safeEmpCode, boxType, entryStream, fileName, updatedBy);
+                        }
+
+                        updatedEmployees.Add(safeEmpCode);
+                        result.SuccessCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        result.FailureCount++;
+                        result.Errors.Add($"Error processing '{entry.FullName}': {ex.Message}");
                     }
                 }
-
-                if (string.IsNullOrWhiteSpace(empCode))
-                {
-                    result.FailureCount++;
-                    result.Errors.Add($"Skipped '{entry.FullName}': could not determine EmpCode from folder name or file prefix.");
-                    continue;
-                }
-
-                var safeEmpCode = SanitizeEmpCode(empCode);
-                var lowerName = fileName.ToLowerInvariant();
-
-                string? boxType = null;
-                bool isSignedHardcopy = false;
-
-                if (lowerName.Contains("aadhaar") || lowerName.Contains("aadhar") || lowerName.EndsWith("_1.jpg") || lowerName.EndsWith("-1.jpg"))
-                {
-                    boxType = "aadhaar";
-                }
-                else if (lowerName.Contains("idcard") || lowerName.Contains("id_card") || lowerName.Contains("voter") || lowerName.Contains("pan") || lowerName.EndsWith("_2.jpg") || lowerName.EndsWith("-2.jpg"))
-                {
-                    boxType = "idcard";
-                }
-                else if (lowerName.Contains("person") || lowerName.Contains("face") || lowerName.Contains("photo") || lowerName.Contains("worker") || lowerName.EndsWith("_3.jpg") || lowerName.EndsWith("-3.jpg"))
-                {
-                    boxType = "person";
-                }
-                else if (lowerName.Contains("template") || lowerName.Contains("machine") || lowerName.Contains("finger") || lowerName.Contains("fp") || lowerName.EndsWith("_4.jpg") || lowerName.EndsWith("-4.jpg"))
-                {
-                    boxType = "template";
-                }
-                else if (lowerName.Contains("signed") || lowerName.Contains("form") || lowerName.EndsWith(".pdf"))
-                {
-                    isSignedHardcopy = true;
-                }
-                else
-                {
-                    result.FailureCount++;
-                    result.Errors.Add($"File '{entry.FullName}': unrecognized box name. Expected aadhaar, idcard, person, template, or signed form.");
-                    continue;
-                }
-
-                using var entryStream = entry.Open();
-                if (isSignedHardcopy)
-                {
-                    await UploadSignedPhysicalFormAsync(safeEmpCode, entryStream, fileName, updatedBy);
-                }
-                else if (boxType != null)
-                {
-                    await UploadPhotoAsync(safeEmpCode, boxType, entryStream, fileName, updatedBy);
-                }
-
-                updatedEmployees.Add(safeEmpCode);
-                result.SuccessCount++;
             }
-            catch (Exception ex)
+        }
+        finally
+        {
+            if (File.Exists(tempZipPath))
             {
-                result.FailureCount++;
-                result.Errors.Add($"Error processing '{entry.FullName}': {ex.Message}");
+                try { File.Delete(tempZipPath); } catch { /* ignore */ }
             }
         }
 
@@ -727,7 +756,7 @@ public class BiometricFormService : IBiometricFormService
     {
         var sb = new StringBuilder();
         sb.AppendLine("Employee ID,Employee Name,Aadhaar Number,Category of Employee (Executive/Non-Executive),Position/Designation,Department/Unit,Place of Posting,Registration Date & Time (YYYY-MM-DD HH:MM),Location of Registration,Name of Controlling Officer,Designation of Controlling Officer,ECL HR Name,ECL HR Designation,ECL Security Name,ECL Security Designation,WEBEL Name,WEBEL Designation,WEBEL Department,ECL/WEBEL Witness Name,ECL/WEBEL Witness Designation");
-        sb.AppendLine("TSA011,RAMESH KUMAR,123456789012,Non-Executive,Colliery Worker,Pithead Unit 1,Sodepur Area,2026-11-04 10:30,Pithead Incline Desk,S. K. Verma,Senior Manager (Mining),A. Banerjee,Assistant Manager (HR),R. Singh,Security Inspector,D. Ghosh,Site Engineer,Technical,M. Roy,System Supervisor");
+        sb.AppendLine("TSA011,RAMESH KUMAR,123456789012,Non-Executive,Colliery Worker,Pit 1 Colliery Unit,Salanpur Mining Area,2026-11-04 10:30,Pithead Incline Desk,S. K. Verma,Senior Manager (Mining),A. Banerjee,Assistant Manager (HR),R. Singh,Security Inspector,D. Ghosh,Site Engineer,Technical,M. Roy,System Supervisor");
         return Encoding.UTF8.GetBytes(sb.ToString());
     }
 

@@ -329,7 +329,7 @@
                                     <span class="fw-semibold text-truncate d-inline-block" style="max-width: 160px;" title="@m.EmployeeName">@(m.EmployeeName ?? "—")</span>
                                     @if (m.IsHigherAuthority)
                                     {
-                                        <span class="badge ms-1" style="background-color: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; font-size: 0.70rem;" title="Higher Authority / Executive">👔 Higher Authority</span>
+                                        <span class="badge ms-1" style="background-color: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; font-size: 0.70rem;" title="Executive: single-punch attendance permitted">👔 Executive</span>
                                     }
                                     @if (m.IsManuallyCorrected)
                                     {
@@ -1217,7 +1217,7 @@ else
                 string outMach = (m.OutDeviceName ?? m.OutSerialNumber ?? "").Replace(",", " ");
                 string remarks = (m.Remarks ?? "").Replace(",", ";");
                 string desig = (m.Designation ?? "Colliery Worker").Replace(",", " ");
-                string authStatus = m.IsHigherAuthority ? "Higher Authority" : "General Personnel";
+                string authStatus = m.IsHigherAuthority ? "Executive" : "General Personnel";
                 string regStatus = m.IsManuallyCorrected ? "Yes (Manual)" : "No (Turnstile)";
                 string corrBy = (m.CorrectedBy ?? "").Replace(",", " ");
                 string corrReason = (m.CorrectionReason ?? "").Replace(",", ";");

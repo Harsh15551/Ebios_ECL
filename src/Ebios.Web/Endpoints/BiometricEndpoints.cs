@@ -23,7 +23,9 @@ public static class BiometricEndpoints
             var dir = Path.Combine(env.ContentRootPath, "storage", "biometric_forms", cleanEmpCode);
             if (!Directory.Exists(dir))
             {
-                return Results.NotFound();
+                var altDir = Path.Combine(Directory.GetCurrentDirectory(), "storage", "biometric_forms", cleanEmpCode);
+                if (Directory.Exists(altDir)) dir = altDir;
+                else return Results.NotFound();
             }
 
             var filePath = Path.Combine(dir, $"{cleanEmpCode}_{cleanBox}.jpg");
@@ -45,7 +47,12 @@ public static class BiometricEndpoints
         {
             var cleanEmpCode = Sanitize(empCode);
             var dir = Path.Combine(env.ContentRootPath, "storage", "biometric_forms", cleanEmpCode);
-            if (!Directory.Exists(dir)) return Results.NotFound();
+            if (!Directory.Exists(dir))
+            {
+                var altDir = Path.Combine(Directory.GetCurrentDirectory(), "storage", "biometric_forms", cleanEmpCode);
+                if (Directory.Exists(altDir)) dir = altDir;
+                else return Results.NotFound();
+            }
 
             // Look for _signed_form.*
             var files = Directory.GetFiles(dir, $"{cleanEmpCode}_signed_form.*");
