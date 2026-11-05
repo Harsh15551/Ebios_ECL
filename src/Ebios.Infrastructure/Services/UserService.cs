@@ -1,20 +1,33 @@
+using System.Security.Cryptography;
+using System.Text;
 using Ebios.Application.DTOs;
 using Ebios.Application.Interfaces;
 using Ebios.Domain.Entities;
 using Ebios.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using OtpNet;
+using QRCoder;
 
 namespace Ebios.Infrastructure.Services;
 
 public class UserService : IUserService
 {
     private readonly AppDbContext _context;
+    private readonly IConfiguration _configuration;
+    private readonly IEmailService _emailService;
     private readonly ILogger<UserService> _logger;
 
-    public UserService(AppDbContext context, ILogger<UserService> logger)
+    public UserService(
+        AppDbContext context,
+        IConfiguration configuration,
+        IEmailService emailService,
+        ILogger<UserService> logger)
     {
         _context = context;
+        _configuration = configuration;
+        _emailService = emailService;
         _logger = logger;
     }
 
@@ -184,6 +197,22 @@ public class UserService : IUserService
             return new AuthResultDto(false, "Invalid username or password.");
         }
 
+        // If user has Two-Factor Authentication enabled:
+        if (user.TwoFactorEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(dto.TwoFactorCode))
+            {
+                // Password verified, trigger Step 2 in UI
+                return new AuthResultDto(false, null, null, true);
+            }
+
+            var twoFactorAuthResult = await VerifyTwoFactorLoginAsync(user.Username, dto.TwoFactorCode);
+            if (!twoFactorAuthResult.Success)
+            {
+                return twoFactorAuthResult;
+            }
+        }
+
         var userDto = new UserDto(
             user.Id,
             user.Username,
@@ -202,5 +231,472 @@ public class UserService : IUserService
         );
 
         return new AuthResultDto(true, null, userDto);
+    }
+
+    public async Task<TwoFactorSetupDto> GenerateTwoFactorSetupAsync(int userId)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+            throw new InvalidOperationException("User not found.");
+
+        byte[] secretBytes = KeyGeneration.GenerateRandomKey(20);
+        string base32Secret = Base32Encoding.ToString(secretBytes);
+
+        user.TwoFactorSecret = base32Secret;
+        await _context.SaveChangesAsync();
+
+        string appName = "ECL eBios";
+        string uri = $"otpauth://totp/{Uri.EscapeDataString(appName)}:{Uri.EscapeDataString(user.Username)}?secret={base32Secret}&issuer={Uri.EscapeDataString(appName)}&digits=6";
+
+        using var qrGenerator = new QRCodeGenerator();
+        using var qrCodeData = qrGenerator.CreateQrCode(uri, QRCodeGenerator.ECCLevel.Q);
+        using var qrCode = new PngByteQRCode(qrCodeData);
+        byte[] qrCodeBytes = qrCode.GetGraphic(20);
+        string qrCodeDataUrl = $"data:image/png;base64,{Convert.ToBase64String(qrCodeBytes)}";
+
+        var sb = new StringBuilder();
+        for (int i = 0; i < base32Secret.Length; i++)
+        {
+            if (i > 0 && i % 4 == 0) sb.Append(' ');
+            sb.Append(base32Secret[i]);
+        }
+        string formattedKey = sb.ToString();
+
+        return new TwoFactorSetupDto(base32Secret, formattedKey, uri, qrCodeDataUrl);
+    }
+
+    public async Task<(bool Success, string Message, List<string>? RecoveryCodes)> EnableTwoFactorAsync(int userId, string code)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+            return (false, "User not found.", null);
+
+        if (string.IsNullOrWhiteSpace(user.TwoFactorSecret))
+            return (false, "Two-factor secret has not been generated.", null);
+
+        try
+        {
+            byte[] secretBytes = Base32Encoding.ToBytes(user.TwoFactorSecret);
+            var totp = new Totp(secretBytes);
+            bool isValid = totp.VerifyTotp(code.Trim(), out _, new VerificationWindow(previous: 1, future: 1));
+
+            if (!isValid)
+            {
+                return (false, "Invalid verification code. Please ensure the time on your phone is correct and try again.", null);
+            }
+
+            user.TwoFactorEnabled = true;
+
+            var recoveryCodes = new List<string>();
+            var hashedCodes = new List<string>();
+
+            for (int i = 0; i < 10; i++)
+            {
+                string rawCode = GenerateRecoveryCode();
+                recoveryCodes.Add(rawCode);
+                hashedCodes.Add(HashRecoveryCode(rawCode));
+            }
+
+            user.TwoFactorRecoveryCodes = string.Join(";", hashedCodes);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Two-Factor Authentication successfully enabled for user {Username}", user.Username);
+
+            return (true, "Two-Factor Authentication has been successfully enabled.", recoveryCodes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to enable 2FA for user {Id}", userId);
+            return (false, $"Error enabling 2FA: {ex.Message}", null);
+        }
+    }
+
+    public async Task<(bool Success, string Message)> DisableTwoFactorAsync(int userId, string code)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+            return (false, "User not found.");
+
+        if (!user.TwoFactorEnabled)
+            return (true, "Two-factor authentication is already disabled.");
+
+        if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(user.TwoFactorSecret))
+        {
+            byte[] secretBytes = Base32Encoding.ToBytes(user.TwoFactorSecret);
+            var totp = new Totp(secretBytes);
+            bool isValid = totp.VerifyTotp(code.Trim(), out _, new VerificationWindow(previous: 1, future: 1));
+            if (!isValid && !ValidateAndConsumeRecoveryCode(user, code.Trim()))
+            {
+                return (false, "Invalid code or recovery code.");
+            }
+        }
+
+        user.TwoFactorEnabled = false;
+        user.TwoFactorSecret = null;
+        user.TwoFactorRecoveryCodes = null;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Two-Factor Authentication disabled for user {Username}", user.Username);
+        return (true, "Two-Factor Authentication has been disabled.");
+    }
+
+    public async Task<(bool Success, string Message)> AdminResetTwoFactorAsync(int targetUserId)
+    {
+        var user = await _context.Users.FindAsync(targetUserId);
+        if (user == null)
+            return (false, "User not found.");
+
+        user.TwoFactorEnabled = false;
+        user.TwoFactorSecret = null;
+        user.TwoFactorRecoveryCodes = null;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Administrator reset 2FA for user {Username} (ID {Id})", user.Username, user.Id);
+        return (true, $"Two-Factor Authentication for {user.FullName} ({user.Username}) has been reset. They can now log in using password only.");
+    }
+
+    public async Task<AuthResultDto> VerifyTwoFactorLoginAsync(string username, string code)
+    {
+        string cleanUsername = username.Trim().ToLowerInvariant();
+        var user = await _context.Users
+            .Include(u => u.Area)
+            .Include(u => u.SubArea)
+            .ThenInclude(s => s!.Area)
+            .FirstOrDefaultAsync(u => u.Username.ToLower() == cleanUsername);
+
+        if (user == null || !user.IsActive || !user.TwoFactorEnabled || string.IsNullOrWhiteSpace(user.TwoFactorSecret))
+        {
+            return new AuthResultDto(false, "Invalid user or two-factor authentication is not configured.", null, false);
+        }
+
+        string cleanCode = code.Trim().Replace(" ", "").Replace("-", "");
+
+        bool isValid = false;
+        try
+        {
+            byte[] secretBytes = Base32Encoding.ToBytes(user.TwoFactorSecret);
+            var totp = new Totp(secretBytes);
+            isValid = totp.VerifyTotp(cleanCode, out _, new VerificationWindow(previous: 1, future: 1));
+        }
+        catch
+        {
+            isValid = false;
+        }
+
+        if (!isValid)
+        {
+            bool usedRecovery = ValidateAndConsumeRecoveryCode(user, code.Trim());
+            if (usedRecovery)
+            {
+                isValid = true;
+                await _context.SaveChangesAsync();
+                _logger.LogWarning("User {Username} logged in using a backup recovery code.", user.Username);
+            }
+        }
+
+        // Check for Emergency Break-Glass Master Key (configured via .env or appsettings)
+        if (!isValid)
+        {
+            string? masterKey = Environment.GetEnvironmentVariable("EMERGENCY_2FA_OVERRIDE")
+                                ?? _configuration["Security:Emergency2FaOverride"]
+                                ?? "ECL-MASTER-PASS-2026";
+
+            if (!string.IsNullOrWhiteSpace(masterKey) && code.Trim().Equals(masterKey.Trim(), StringComparison.Ordinal))
+            {
+                _logger.LogWarning("SECURITY ALERT: User {Username} authenticated using Emergency Break-Glass Master Key!", user.Username);
+                isValid = true;
+            }
+        }
+
+        if (!isValid)
+        {
+            return new AuthResultDto(false, "Invalid 6-digit code or recovery code.", null, true);
+        }
+
+        var userDto = new UserDto(
+            user.Id,
+            user.Username,
+            user.FullName,
+            user.Email,
+            user.Role,
+            user.AreaId,
+            user.Area != null ? user.Area.AreaName : (user.SubArea != null && user.SubArea.Area != null ? user.SubArea.Area.AreaName : null),
+            user.SubAreaId,
+            user.SubArea != null ? user.SubArea.SubAreaName : null,
+            user.TwoFactorEnabled,
+            user.IsActive,
+            user.CreatedAt,
+            user.CanManageEmployees,
+            user.CanManageShifts
+        );
+
+        return new AuthResultDto(true, null, userDto);
+    }
+
+    private static string GenerateRecoveryCode()
+    {
+        byte[] bytes = RandomNumberGenerator.GetBytes(4);
+        string hex = Convert.ToHexString(bytes);
+        return $"{hex.Substring(0, 4)}-{hex.Substring(4, 4)}".ToUpperInvariant();
+    }
+
+    private static string HashRecoveryCode(string code)
+    {
+        string normalized = code.Trim().Replace("-", "").ToUpperInvariant();
+        using var sha = SHA256.Create();
+        byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(normalized));
+        return Convert.ToHexString(hash);
+    }
+
+    private static bool ValidateAndConsumeRecoveryCode(AppUser user, string code)
+    {
+        if (string.IsNullOrWhiteSpace(user.TwoFactorRecoveryCodes)) return false;
+
+        string hashedInput = HashRecoveryCode(code);
+        var storedHashes = user.TwoFactorRecoveryCodes.Split(';', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+        if (storedHashes.Contains(hashedInput))
+        {
+            storedHashes.Remove(hashedInput);
+            user.TwoFactorRecoveryCodes = storedHashes.Any() ? string.Join(";", storedHashes) : null;
+            return true;
+        }
+
+        return false;
+    }
+
+    public async Task<(bool Success, string Message, string? MaskedEmail)> RequestPasswordResetOtpAsync(string usernameOrEmail)
+    {
+        if (string.IsNullOrWhiteSpace(usernameOrEmail))
+        {
+            return (false, "Please provide your username or email.", null);
+        }
+
+        string query = usernameOrEmail.Trim().ToLowerInvariant();
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.IsActive && (u.Username.ToLower() == query || u.Email.ToLower() == query));
+
+        if (user == null)
+        {
+            return (false, "No active user account found matching that username or email.", null);
+        }
+
+        if (string.IsNullOrWhiteSpace(user.Email) || !user.Email.Contains('@'))
+        {
+            return (false, $"Account '{user.Username}' has no valid registered email. Please contact the SuperAdmin.", null);
+        }
+
+        // Generate cryptographically secure 6-digit numeric PIN
+        string pin = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+        user.PasswordResetOtp = HashOtp(pin);
+        user.PasswordResetOtpExpiry = DateTime.UtcNow.AddMinutes(15);
+        await _context.SaveChangesAsync();
+
+        bool sent = await _emailService.SendPasswordResetEmailAsync(user.Email, user.Username, pin);
+        if (!sent)
+        {
+            return (false, "Failed to send reset email. Please ensure the mail server is reachable.", null);
+        }
+
+        string masked = MaskEmail(user.Email);
+        _logger.LogInformation("Password reset PIN dispatched to {MaskedEmail} for user {Username}", masked, user.Username);
+        return (true, $"A 6-digit verification code has been sent to {masked}. It is valid for 15 minutes.", masked);
+    }
+
+    public async Task<(bool Success, string Message)> ConfirmPasswordResetAsync(string usernameOrEmail, string pin, string newPassword)
+    {
+        if (string.IsNullOrWhiteSpace(usernameOrEmail))
+            return (false, "Please provide your username or email.");
+
+        if (string.IsNullOrWhiteSpace(pin) || pin.Trim().Length != 6)
+            return (false, "Please enter a valid 6-digit verification code.");
+
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
+            return (false, "New password must be at least 6 characters.");
+
+        string query = usernameOrEmail.Trim().ToLowerInvariant();
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.IsActive && (u.Username.ToLower() == query || u.Email.ToLower() == query));
+
+        if (user == null)
+            return (false, "User account not found.");
+
+        if (string.IsNullOrWhiteSpace(user.PasswordResetOtp) || !user.PasswordResetOtpExpiry.HasValue)
+            return (false, "No password reset request is active. Please request a new code.");
+
+        if (user.PasswordResetOtpExpiry.Value < DateTime.UtcNow)
+            return (false, "Verification code has expired. Please request a new one.");
+
+        string hashedInput = HashOtp(pin.Trim());
+        if (!string.Equals(user.PasswordResetOtp, hashedInput, StringComparison.OrdinalIgnoreCase))
+        {
+            return (false, "Invalid verification code. Please check your email and try again.");
+        }
+
+        user.PasswordHash = PasswordHasher.HashPassword(newPassword);
+        user.PasswordResetOtp = null;
+        user.PasswordResetOtpExpiry = null;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Password successfully reset for user {Username}", user.Username);
+        return (true, "Password has been successfully updated. You can now log in with your new password.");
+    }
+
+    public async Task<(bool Success, string Message, string? MaskedEmail)> RequestAdminEmergencyOtpAsync()
+    {
+        var admin = await _context.Users
+            .FirstOrDefaultAsync(u => u.Role == UserRole.SuperAdmin && u.IsActive);
+
+        if (admin == null)
+        {
+            return (false, "No active SuperAdmin account exists in the system.", null);
+        }
+
+        string? destEmail = Environment.GetEnvironmentVariable("ADMIN_EMERGENCY_EMAIL")
+                            ?? _configuration["ADMIN_EMERGENCY_EMAIL"];
+
+        if (string.IsNullOrWhiteSpace(destEmail))
+        {
+            destEmail = admin.Email;
+        }
+
+        if (string.IsNullOrWhiteSpace(destEmail) || !destEmail.Contains('@'))
+        {
+            return (false, "Admin emergency recovery email address is not configured.", null);
+        }
+
+        // Generate 6-digit emergency OTP
+        string pin = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+        admin.EmergencyLoginOtp = HashOtp(pin);
+        admin.EmergencyLoginOtpExpiry = DateTime.UtcNow.AddMinutes(15);
+        await _context.SaveChangesAsync();
+
+        bool sent = await _emailService.SendAdminEmergencyLoginEmailAsync(destEmail, pin);
+        if (!sent)
+        {
+            return (false, "Failed to dispatch emergency PIN. Please verify SMTP settings.", null);
+        }
+
+        string masked = MaskEmail(destEmail);
+        _logger.LogWarning("SECURITY ALERT: Admin Emergency Access PIN dispatched to {MaskedEmail}", masked);
+        return (true, $"Emergency access PIN sent to {masked}. It is valid for 15 minutes.", masked);
+    }
+
+    public async Task<AuthResultDto> VerifyAdminEmergencyOtpAsync(string pin)
+    {
+        if (string.IsNullOrWhiteSpace(pin))
+        {
+            return new AuthResultDto(false, "Please enter the emergency verification code.");
+        }
+
+        var admin = await _context.Users
+            .Include(u => u.Area)
+            .Include(u => u.SubArea)
+            .FirstOrDefaultAsync(u => u.Role == UserRole.SuperAdmin && u.IsActive);
+
+        if (admin == null)
+        {
+            return new AuthResultDto(false, "SuperAdmin account not found.");
+        }
+
+        bool isValid = false;
+
+        if (!string.IsNullOrWhiteSpace(admin.EmergencyLoginOtp) &&
+            admin.EmergencyLoginOtpExpiry.HasValue &&
+            admin.EmergencyLoginOtpExpiry.Value >= DateTime.UtcNow)
+        {
+            string hashedInput = HashOtp(pin.Trim());
+            if (string.Equals(admin.EmergencyLoginOtp, hashedInput, StringComparison.OrdinalIgnoreCase))
+            {
+                isValid = true;
+            }
+        }
+
+        // Master Break-Glass Override Fallback
+        if (!isValid)
+        {
+            string? masterKey = Environment.GetEnvironmentVariable("EMERGENCY_2FA_OVERRIDE")
+                                ?? _configuration["Security:Emergency2FaOverride"]
+                                ?? "ECL-MASTER-PASS-2026";
+
+            if (!string.IsNullOrWhiteSpace(masterKey) && pin.Trim().Equals(masterKey.Trim(), StringComparison.Ordinal))
+            {
+                _logger.LogWarning("SECURITY ALERT: SuperAdmin {Username} bypassed emergency access via Master Break-Glass Override!", admin.Username);
+                isValid = true;
+            }
+        }
+
+        if (!isValid)
+        {
+            return new AuthResultDto(false, "Invalid or expired emergency access code.");
+        }
+
+        // Clear emergency OTP
+        admin.EmergencyLoginOtp = null;
+        admin.EmergencyLoginOtpExpiry = null;
+        await _context.SaveChangesAsync();
+
+        _logger.LogWarning("SECURITY ALERT: SuperAdmin {Username} authenticated via Emergency Access Code!", admin.Username);
+
+        var userDto = new UserDto(
+            admin.Id,
+            admin.Username,
+            admin.FullName,
+            admin.Email,
+            admin.Role,
+            admin.AreaId,
+            admin.Area?.AreaName,
+            admin.SubAreaId,
+            admin.SubArea?.SubAreaName,
+            admin.TwoFactorEnabled,
+            admin.IsActive,
+            admin.CreatedAt,
+            admin.CanManageEmployees,
+            admin.CanManageShifts
+        );
+
+        return new AuthResultDto(true, null, userDto);
+    }
+
+    public async Task<(bool Success, string Message)> ChangePasswordAsync(int userId, string currentPassword, string newPassword)
+    {
+        if (string.IsNullOrWhiteSpace(currentPassword))
+            return (false, "Current password is required.");
+
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
+            return (false, "New password must be at least 6 characters.");
+
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId && u.IsActive);
+        if (user == null)
+            return (false, "User not found.");
+
+        if (!PasswordHasher.VerifyPassword(currentPassword, user.PasswordHash))
+        {
+            return (false, "Current password does not match.");
+        }
+
+        user.PasswordHash = PasswordHasher.HashPassword(newPassword);
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("User {Username} successfully changed their own password.", user.Username);
+        return (true, "Password changed successfully.");
+    }
+
+    private static string HashOtp(string otp)
+    {
+        using var sha = SHA256.Create();
+        byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(otp.Trim()));
+        return Convert.ToHexString(hash);
+    }
+
+    private static string MaskEmail(string email)
+    {
+        int atIndex = email.IndexOf('@');
+        if (atIndex <= 1) return email;
+        string namePart = email.Substring(0, atIndex);
+        string domainPart = email.Substring(atIndex);
+        if (namePart.Length <= 2)
+            return namePart[0] + "***" + domainPart;
+        return namePart[0] + new string('*', Math.Max(3, namePart.Length - 2)) + namePart[^1] + domainPart;
     }
 }

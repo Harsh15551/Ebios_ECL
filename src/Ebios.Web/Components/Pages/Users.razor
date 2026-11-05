@@ -106,6 +106,14 @@ else
                             <tr>
                                 <td>
                                     <span class="fw-bold text-dark font-monospace">@user.Username</span>
+                                    @if (user.TwoFactorEnabled)
+                                    {
+                                        <div class="mt-1">
+                                            <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 0.68rem;">
+                                                <i class="bi bi-shield-check me-1"></i> 2FA Active
+                                            </span>
+                                        </div>
+                                    }
                                 </td>
                                 <td>
                                     <div class="fw-semibold">@user.FullName</div>
@@ -178,6 +186,14 @@ else
                                     @user.CreatedAt.ToString("dd MMM yyyy")
                                 </td>
                                 <td class="text-end text-nowrap">
+                                    @if (user.TwoFactorEnabled)
+                                    {
+                                        <button class="btn btn-sm btn-outline-warning me-1" 
+                                                @onclick="@(() => OpenReset2FaModal(user))" 
+                                                title="Reset Two-Factor Authentication if user lost phone or codes">
+                                            <i class="bi bi-shield-x me-1"></i> Reset 2FA
+                                        </button>
+                                    }
                                     @if (user.Role != UserRole.SuperAdmin)
                                     {
                                         <button class="btn btn-sm btn-outline-primary me-1" 
@@ -397,11 +413,92 @@ else
     </div>
 }
 
+<!-- Reset 2FA Confirmation Modal -->
+@if (showReset2FaModal && targetUserFor2FaReset != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header bg-warning text-dark py-3">
+                    <h5 class="modal-title fw-bold mb-0">
+                        <i class="bi bi-shield-x me-2"></i> Reset Two-Factor Authentication
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="@(() => showReset2FaModal = false)" disabled="@isResetting2Fa"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <p class="mb-2">Are you sure you want to reset 2FA for this user?</p>
+                    <div class="p-3 bg-light rounded border mb-3">
+                        <div><strong>User:</strong> @targetUserFor2FaReset.FullName (<code>@targetUserFor2FaReset.Username</code>)</div>
+                        <div class="text-muted small"><strong>Role:</strong> @targetUserFor2FaReset.Role</div>
+                    </div>
+                    <div class="alert alert-warning py-2 small mb-0">
+                        <strong>Security Effect:</strong> The user will immediately be able to log in using their password only. Their previous authenticator pairing and recovery codes will be permanently invalidated.
+                    </div>
+                </div>
+                <div class="modal-footer bg-light py-2">
+                    <button type="button" class="btn btn-secondary btn-sm" @onclick="@(() => showReset2FaModal = false)" disabled="@isResetting2Fa">Cancel</button>
+                    <button type="button" class="btn btn-warning btn-sm fw-semibold" @onclick="ConfirmReset2FaAsync" disabled="@isResetting2Fa">
+                        @if (isResetting2Fa)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Resetting 2FA...</span>
+                        }
+                        else
+                        {
+                            <span>Yes, Reset 2FA</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private List<UserDto> users = new();
     private List<AreaDto> areas = new();
     private List<SubAreaDto> subAreas = new();
     private bool isLoading = true;
+
+    // Reset 2FA State
+    private bool showReset2FaModal = false;
+    private bool isResetting2Fa = false;
+    private UserDto? targetUserFor2FaReset;
+
+    private void OpenReset2FaModal(UserDto user)
+    {
+        targetUserFor2FaReset = user;
+        showReset2FaModal = true;
+    }
+
+    private async Task ConfirmReset2FaAsync()
+    {
+        if (targetUserFor2FaReset == null) return;
+
+        isResetting2Fa = true;
+        try
+        {
+            var (success, msg) = await UserService.AdminResetTwoFactorAsync(targetUserFor2FaReset.Id);
+            if (success)
+            {
+                successMessage = msg;
+                showReset2FaModal = false;
+                await LoadDataAsync();
+            }
+            else
+            {
+                errorMessage = msg;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to reset 2FA: {ex.Message}";
+        }
+        finally
+        {
+            isResetting2Fa = false;
+        }
+    }
 
     // Filters
     private string searchTerm = string.Empty;

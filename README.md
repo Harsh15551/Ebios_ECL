@@ -36,7 +36,8 @@ EBIOS_USERNAME=essl
 EBIOS_PASSWORD=YOUR_EBIOS_PASSWORD
 
 # eBioServer Webhook Decryption Key (32-character AES-256 key)
-EBIOS_WEBHOOK_KEY=essl1234111111111111111111111111
+EBIOS_WEBHOOK_KEY=YOUR_32_CHAR_AES_KEY_HERE
+
 ```
 
 > **Note**: The `.env` file is listed in `.gitignore` and is never committed to GitHub.
@@ -72,7 +73,7 @@ Because eBioServer runs on a remote server/IP, it cannot directly reach `localho
    - Navigate to **Utilities** -> **Web Hook Settings**.
    - Set **Web Hook URL**: `https://XYZ.loca.lt/api/webhook/attendance`
    - Encryption: Enable or Disable (both are supported).
-   - If Encryption is Enabled: Set Password to 32 characters (e.g. `essl1234111111111111111111111111`).
+   - If Encryption is Enabled: Set Password to 32 characters (configured in `.env` as `EBIOS_WEBHOOK_KEY`).
    - Click **Save**.
 4. Punch on any registered SilkBio or Face/Finger turnstile device.
 5. Watch the punch appear instantly in real-time under the **Attendance & Logs** console (`/attendance`).

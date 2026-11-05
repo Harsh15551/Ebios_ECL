@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @inject UserSessionService UserSession
+@inject IUserService UserService
 @inject NavigationManager Navigation
 @implements IDisposable
 
@@ -51,6 +52,12 @@ else
                             <span class="badge bg-info text-dark">Unit Manager (@UserSession.CurrentUser?.SubAreaName)</span>
                         }
 
+                        <a href="security/2fa" class="btn btn-sm btn-outline-secondary ms-1 py-0 px-2" title="Two-Factor Authentication Security Settings">
+                            <i class="bi bi-shield-lock me-1 text-primary"></i> 2FA
+                        </a>
+                        <button class="btn btn-sm btn-outline-secondary ms-1 py-0 px-2" @onclick="OpenChangePasswordModal" title="Change your login password">
+                            <i class="bi bi-key me-1 text-warning"></i> Password
+                        </button>
                         <button class="btn btn-sm btn-outline-danger ms-2 py-0 px-2 fw-semibold" @onclick="HandleLogout" title="Sign out of current account">
                             🚪 Logout
                         </button>
@@ -63,6 +70,74 @@ else
             </article>
         </main>
     </div>
+
+    @if (showChangePasswordModal)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);" role="dialog">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content border-0 shadow-lg rounded-3">
+                    <div class="modal-header bg-dark text-white">
+                        <h5 class="modal-title fs-6 fw-bold">
+                            <i class="bi bi-key-fill text-warning me-2"></i>Change Account Password
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" @onclick="CloseChangePasswordModal" disabled="@isChangingPassword"></button>
+                    </div>
+                    <div class="modal-body p-4">
+                        @if (!string.IsNullOrEmpty(changePasswordError))
+                        {
+                            <div class="alert alert-danger py-2 small mb-3">@changePasswordError</div>
+                        }
+                        @if (!string.IsNullOrEmpty(changePasswordSuccess))
+                        {
+                            <div class="alert alert-success py-2 small mb-3">
+                                <i class="bi bi-check-circle-fill me-1"></i> @changePasswordSuccess
+                            </div>
+                        }
+
+                        @if (string.IsNullOrEmpty(changePasswordSuccess))
+                        {
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold">Current Password</label>
+                                <input type="password" class="form-control" placeholder="Enter your current password" @bind="currentPassword" disabled="@isChangingPassword" autofocus />
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold">New Password</label>
+                                <input type="password" class="form-control" placeholder="Minimum 6 characters" @bind="newPassword" disabled="@isChangingPassword" />
+                            </div>
+                            <div class="mb-4">
+                                <label class="form-label small fw-semibold">Confirm New Password</label>
+                                <input type="password" class="form-control" placeholder="Re-enter new password" @bind="confirmNewPassword" disabled="@isChangingPassword" />
+                            </div>
+                            <div class="d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-secondary btn-sm" @onclick="CloseChangePasswordModal" disabled="@isChangingPassword">
+                                    Cancel
+                                </button>
+                                <button type="button" class="btn btn-primary btn-sm fw-semibold" @onclick="HandleChangePasswordSubmit" disabled="@isChangingPassword">
+                                    @if (isChangingPassword)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                        <span>Saving...</span>
+                                    }
+                                    else
+                                    {
+                                        <span><i class="bi bi-check2 me-1"></i> Update Password</span>
+                                    }
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="text-end">
+                                <button type="button" class="btn btn-primary btn-sm" @onclick="CloseChangePasswordModal">
+                                    Done
+                                </button>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
 }
 
 <div id="blazor-error-ui" data-nosnippet>
@@ -72,12 +147,91 @@ else
 </div>
 
 @code {
+    private bool showChangePasswordModal = false;
+    private string currentPassword = "";
+    private string newPassword = "";
+    private string confirmNewPassword = "";
+    private string? changePasswordError;
+    private string? changePasswordSuccess;
+    private bool isChangingPassword = false;
+
     protected override void OnInitialized()
     {
         UserSession.OnChange += StateHasChanged;
         if (!UserSession.IsAuthenticated)
         {
             Navigation.NavigateTo("login");
+        }
+    }
+
+    private void OpenChangePasswordModal()
+    {
+        showChangePasswordModal = true;
+        currentPassword = "";
+        newPassword = "";
+        confirmNewPassword = "";
+        changePasswordError = null;
+        changePasswordSuccess = null;
+        isChangingPassword = false;
+    }
+
+    private void CloseChangePasswordModal()
+    {
+        showChangePasswordModal = false;
+    }
+
+    private async Task HandleChangePasswordSubmit()
+    {
+        changePasswordError = null;
+        changePasswordSuccess = null;
+
+        if (string.IsNullOrWhiteSpace(currentPassword))
+        {
+            changePasswordError = "Please enter your current password.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
+        {
+            changePasswordError = "New password must be at least 6 characters long.";
+            return;
+        }
+
+        if (newPassword != confirmNewPassword)
+        {
+            changePasswordError = "New password and confirmation do not match.";
+            return;
+        }
+
+        if (UserSession.CurrentUser == null)
+        {
+            changePasswordError = "No active user session.";
+            return;
+        }
+
+        isChangingPassword = true;
+        try
+        {
+            var result = await UserService.ChangePasswordAsync(UserSession.CurrentUser.Id, currentPassword, newPassword);
+            if (result.Success)
+            {
+                changePasswordSuccess = "Password updated successfully!";
+                currentPassword = "";
+                newPassword = "";
+                confirmNewPassword = "";
+            }
+            else
+            {
+                changePasswordError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            changePasswordError = $"Failed to change password: {ex.Message}";
+        }
+        finally
+        {
+            isChangingPassword = false;
         }
     }
 

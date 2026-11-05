@@ -8,7 +8,7 @@
 .env.*.local
 .env.production
 .env.staging
-!.env.example
+
 
 # 2. Sensitive Local AppSettings Overrides
 appsettings.Development.json

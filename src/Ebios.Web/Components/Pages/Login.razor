@@ -7,7 +7,7 @@
 
 <PageTitle>Login - Eastern Coalfields Limited eBios Portal</PageTitle>
 
-<div class="card shadow-lg border-0 rounded-4 overflow-hidden">
+<div class="card shadow-lg border-0 rounded-4 overflow-hidden" style="max-width: 480px; width: 100%; margin: auto;">
     <!-- Header Banner -->
     <div class="bg-dark text-white p-4 text-center border-bottom border-warning border-4">
         <div class="d-inline-flex align-items-center justify-content-center bg-primary rounded-circle mb-3" style="width: 52px; height: 52px;">
@@ -28,54 +28,157 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="me-2 flex-shrink-0" viewBox="0 0 16 16">
                     <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
                 </svg>
-                <div>@errorMessage</div>
+                <div class="small">@errorMessage</div>
             </div>
         }
 
-        <div class="mb-3">
-            <label class="form-label fw-semibold text-dark">Username</label>
-            <div class="input-group">
-                <span class="input-group-text bg-light">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="text-secondary" viewBox="0 0 16 16">
-                        <path d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3Zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
-                    </svg>
-                </span>
-                <input type="text" class="form-control" placeholder="e.g. admin" @bind="username" disabled="@isLoading" autofocus @onkeydown="HandleKeyDown" />
+        @if (!string.IsNullOrEmpty(successMessage))
+        {
+            <div class="alert alert-success d-flex align-items-center mb-4 py-2" role="alert">
+                <i class="bi bi-check-circle-fill me-2 flex-shrink-0"></i>
+                <div class="small">@successMessage</div>
             </div>
-        </div>
+        }
 
-        <div class="mb-4">
-            <label class="form-label fw-semibold text-dark">Password</label>
-            <div class="input-group">
-                <span class="input-group-text bg-light">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="text-secondary" viewBox="0 0 16 16">
-                        <path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
-                    </svg>
-                </span>
-                <input type="password" class="form-control" placeholder="Enter password (pass@123)" autocomplete="new-password" @bind="password" disabled="@isLoading" @onkeydown="HandleKeyDown" />
+        @if (!isTwoFactorStep)
+        {
+            <!-- STEP 1: Username & Password -->
+            <div class="mb-3">
+                <label class="form-label fw-semibold text-dark">Username</label>
+                <div class="input-group">
+                    <span class="input-group-text bg-light">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="text-secondary" viewBox="0 0 16 16">
+                            <path d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3Zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
+                        </svg>
+                    </span>
+                    <input type="text" class="form-control" placeholder="e.g. admin" @bind="username" disabled="@isLoading" autofocus @onkeydown="HandleKeyDown" />
+                </div>
             </div>
-        </div>
 
-        <button type="button" class="btn btn-primary w-100 py-2 fw-semibold shadow-sm" @onclick="HandleLoginAsync" disabled="@isLoading">
-            @if (isLoading)
+            <div class="mb-2">
+                <label class="form-label fw-semibold text-dark">Password</label>
+                <div class="input-group">
+                    <span class="input-group-text bg-light">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="text-secondary" viewBox="0 0 16 16">
+                            <path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
+                        </svg>
+                    </span>
+                    <input type="password" class="form-control" placeholder="Enter password (pass@123)" autocomplete="current-password" @bind="password" disabled="@isLoading" @onkeydown="HandleKeyDown" />
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <button type="button" class="btn btn-link btn-sm text-decoration-none p-0 text-muted" @onclick="OpenForgotPassword">
+                    Forgot Password?
+                </button>
+                <button type="button" class="btn btn-link btn-sm text-decoration-none p-0 text-danger fw-semibold" @onclick="OpenAdminEmergency">
+                    <i class="bi bi-shield-shaded me-1"></i> Admin Emergency Access
+                </button>
+            </div>
+
+            <button type="button" class="btn btn-primary w-100 py-2 fw-semibold shadow-sm" @onclick="HandleLoginAsync" disabled="@isLoading">
+                @if (isLoading)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                    <span>Signing in...</span>
+                }
+                else
+                {
+                    <span>Sign In</span>
+                }
+            </button>
+
+            <div class="text-center mt-4 pt-3 border-top">
+                <p class="text-muted small mb-1">
+                    <strong>Default Password:</strong> <code class="text-primary fw-bold">pass@123</code>
+                </p>
+                <p class="text-muted small mb-0">
+                    <strong>Accounts:</strong> <code>admin</code> (SuperAdmin) &bull; <code>apm_salanpur</code> (Area Admin) &bull; <code>upm_pit1</code> (Unit Manager)
+                </p>
+            </div>
+        }
+        else
+        {
+            <!-- STEP 2: 2FA / TOTP Challenge -->
+            <div class="text-center mb-4">
+                <div class="d-inline-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-circle mb-2" style="width: 56px; height: 56px;">
+                    <i class="bi bi-shield-lock-fill fs-2"></i>
+                </div>
+                <h5 class="fw-bold mb-1">Two-Factor Authentication</h5>
+                <p class="text-muted small mb-0">
+                    @(isUsingRecoveryCode 
+                        ? "Enter one of your emergency 8-character recovery backup codes." 
+                        : "Enter the 6-digit verification code from Google Authenticator or Microsoft Authenticator.")
+                </p>
+            </div>
+
+            @if (!isUsingRecoveryCode)
             {
-                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                <span>Signing in...</span>
+                <div class="mb-4">
+                    <label class="form-label small fw-semibold text-muted text-uppercase tracking-wide text-center d-block">
+                        Authenticator Code
+                    </label>
+                    <input type="text"
+                           inputmode="numeric"
+                           pattern="[0-9]*"
+                           maxlength="6"
+                           autocomplete="one-time-code"
+                           placeholder="000000"
+                           class="form-control form-control-lg text-center fs-2 font-monospace py-3 border-2"
+                           style="letter-spacing: 0.5rem;"
+                           @bind="twoFactorCode"
+                           @bind:event="oninput"
+                           disabled="@isLoading"
+                           autofocus
+                           @onkeydown="Handle2FaKeyDown" />
+                    <div class="form-text text-center text-muted small mt-1">Codes rotate every 30 seconds</div>
+                </div>
             }
             else
             {
-                <span>Sign In</span>
+                <div class="mb-4">
+                    <label class="form-label small fw-semibold text-muted text-uppercase tracking-wide text-center d-block">
+                        Emergency Recovery Code
+                    </label>
+                    <input type="text"
+                           placeholder="e.g. A1B2-C3D4"
+                           class="form-control form-control-lg text-center fs-4 font-monospace py-2 text-uppercase"
+                           @bind="twoFactorCode"
+                           @bind:event="oninput"
+                           disabled="@isLoading"
+                           autofocus
+                           @onkeydown="Handle2FaKeyDown" />
+                    <div class="form-text text-center text-muted small mt-1">Single-use backup code. Dash is optional.</div>
+                </div>
             }
-        </button>
 
-        <div class="text-center mt-4 pt-3 border-top">
-            <p class="text-muted small mb-1">
-                <strong>Password:</strong> <code class="text-primary fw-bold">pass@123</code>
-            </p>
-            <p class="text-muted small mb-0">
-                <strong>Accounts:</strong> <code>admin</code> (SuperAdmin) &bull; <code>apm_salanpur</code> (Area Admin) &bull; <code>upm_pit1</code> (Unit Manager)
-            </p>
-        </div>
+            <button type="button" class="btn btn-primary w-100 py-2 fw-semibold shadow-sm mb-3" @onclick="Handle2FaVerifyAsync" disabled="@(isLoading || string.IsNullOrWhiteSpace(twoFactorCode))">
+                @if (isLoading)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                    <span>Verifying Code...</span>
+                }
+                else
+                {
+                    <span>Verify &amp; Log In</span>
+                }
+            </button>
+
+            <div class="d-flex justify-content-between align-items-center small pt-3 border-top">
+                <button type="button" class="btn btn-link btn-sm text-decoration-none p-0 text-secondary" @onclick="BackToLogin">
+                    &larr; Back to password
+                </button>
+                <button type="button" class="btn btn-link btn-sm text-decoration-none p-0 text-primary" @onclick="ToggleRecoveryCodeMode">
+                    @(isUsingRecoveryCode ? "Use Authenticator app" : "Lost phone? Use recovery code")
+                </button>
+            </div>
+
+            <div class="text-center mt-3 pt-2">
+                <button type="button" class="btn btn-link btn-sm text-danger text-decoration-none p-0" @onclick="OpenAdminEmergency">
+                    <i class="bi bi-envelope-shield me-1"></i> Admin lost phone? Emergency Email Login
+                </button>
+            </div>
+        }
     </div>
 
     <div class="card-footer bg-light text-center py-2 text-muted small">
@@ -83,11 +186,219 @@
     </div>
 </div>
 
+<!-- ======================================================== -->
+<!-- MODAL: User Self-Service "Forgot Password?"               -->
+<!-- ======================================================== -->
+@if (showForgotModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);" role="dialog">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg rounded-3">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fs-6 fw-bold">
+                        <i class="bi bi-key-fill text-warning me-2"></i>Reset Account Password
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseForgotModal" disabled="@isForgotLoading"></button>
+                </div>
+                <div class="modal-body p-4">
+                    @if (!string.IsNullOrEmpty(forgotError))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">@forgotError</div>
+                    }
+
+                    @if (forgotStep == 1)
+                    {
+                        <p class="text-muted small mb-3">
+                            Enter your username or registered email address. We will dispatch a 6-digit verification code to your email.
+                        </p>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Username or Email</label>
+                            <input type="text" class="form-control" placeholder="e.g. admin or apm_salanpur" @bind="forgotUsernameOrEmail" disabled="@isForgotLoading" autofocus />
+                        </div>
+                        <button type="button" class="btn btn-primary w-100 py-2 fw-semibold" @onclick="HandleSendForgotPin" disabled="@(isForgotLoading || string.IsNullOrWhiteSpace(forgotUsernameOrEmail))">
+                            @if (isForgotLoading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                <span>Sending Code via Gmail...</span>
+                            }
+                            else
+                            {
+                                <span><i class="bi bi-send me-1"></i> Send Verification Code</span>
+                            }
+                        </button>
+                    }
+                    else if (forgotStep == 2)
+                    {
+                        <div class="alert alert-info py-2 small mb-3">
+                            <i class="bi bi-info-circle-fill me-1"></i>
+                            A 6-digit PIN was sent to <strong>@forgotMaskedEmail</strong>. (Valid for 15 minutes).
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold text-center d-block">6-Digit Verification Code</label>
+                            <input type="text"
+                                   inputmode="numeric"
+                                   pattern="[0-9]*"
+                                   maxlength="6"
+                                   autocomplete="one-time-code"
+                                   placeholder="000000"
+                                   class="form-control form-control-lg text-center font-monospace fs-3 border-2"
+                                   style="letter-spacing: 0.5rem;"
+                                   @bind="forgotPin"
+                                   disabled="@isForgotLoading"
+                                   autofocus />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">New Password</label>
+                            <input type="password" class="form-control" placeholder="Minimum 6 characters" @bind="forgotNewPassword" disabled="@isForgotLoading" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Confirm New Password</label>
+                            <input type="password" class="form-control" placeholder="Re-type new password" @bind="forgotConfirmPassword" disabled="@isForgotLoading" />
+                        </div>
+                        <button type="button" class="btn btn-success w-100 py-2 fw-semibold mb-2" @onclick="HandleResetPasswordSubmit" disabled="@(isForgotLoading || string.IsNullOrWhiteSpace(forgotPin) || string.IsNullOrWhiteSpace(forgotNewPassword))">
+                            @if (isForgotLoading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                <span>Updating Password...</span>
+                            }
+                            else
+                            {
+                                <span><i class="bi bi-check-lg me-1"></i> Save New Password</span>
+                            }
+                        </button>
+                        <div class="text-center">
+                            <button type="button" class="btn btn-link btn-sm text-muted text-decoration-none" @onclick="() => forgotStep = 1">
+                                &larr; Resend code or change username
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ======================================================== -->
+<!-- MODAL: SuperAdmin Emergency Access (Break-Glass Gmail)   -->
+<!-- ======================================================== -->
+@if (showAdminEmergencyModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.6);" role="dialog">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg rounded-3">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title fs-6 fw-bold">
+                        <i class="bi bi-shield-shaded me-2"></i>SuperAdmin Emergency Break-Glass Access
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseAdminEmergencyModal" disabled="@isAdminEmergencyLoading"></button>
+                </div>
+                <div class="modal-body p-4">
+                    @if (!string.IsNullOrEmpty(adminEmergencyError))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">@adminEmergencyError</div>
+                    }
+
+                    <div class="card bg-danger-subtle border-danger-subtle p-3 mb-3">
+                        <p class="small text-danger mb-0">
+                            <strong>Root Emergency Protocol:</strong> If you lost your 2FA authenticator device or backup codes, this emergency procedure dispatches an instantaneous 6-digit access code directly to the dedicated Admin Emergency Inbox.
+                        </p>
+                    </div>
+
+                    @if (!adminEmergencyCodeSent)
+                    {
+                        <p class="small text-muted mb-3">
+                            Click below to dispatch the one-time emergency access PIN to the registered admin emergency inbox.
+                        </p>
+                        <button type="button" class="btn btn-danger w-100 py-2 fw-semibold" @onclick="HandleSendAdminEmergencyCode" disabled="@isAdminEmergencyLoading">
+                            @if (isAdminEmergencyLoading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                <span>Dispatching Emergency Code...</span>
+                            }
+                            else
+                            {
+                                <span><i class="bi bi-envelope-exclamation me-1"></i> Dispatch Emergency Code to Admin Email</span>
+                            }
+                        </button>
+                    }
+                    else
+                    {
+                        <div class="alert alert-warning py-2 small mb-3">
+                            <i class="bi bi-send-check-fill text-danger me-1"></i>
+                            An emergency access code was sent to <strong>@adminEmergencyMaskedEmail</strong>. (Valid for 15 minutes).
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold text-center d-block">
+                                Emergency 6-Digit Code / Break-Glass Key
+                            </label>
+                            <input type="text"
+                                   inputmode="numeric"
+                                   pattern="[0-9]*"
+                                   maxlength="30"
+                                   autocomplete="one-time-code"
+                                   placeholder="000000"
+                                   class="form-control form-control-lg text-center font-monospace fs-2 border-danger text-danger fw-bold"
+                                   style="letter-spacing: 0.4rem;"
+                                   @bind="adminEmergencyPin"
+                                   disabled="@isAdminEmergencyLoading"
+                                   autofocus />
+                            <div class="form-text text-center text-muted small mt-1">
+                                Check the Admin Emergency Inbox or use Master Break-Glass Key
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn btn-danger w-100 py-2 fw-semibold mb-2" @onclick="HandleVerifyAdminEmergencyCode" disabled="@(isAdminEmergencyLoading || string.IsNullOrWhiteSpace(adminEmergencyPin))">
+                            @if (isAdminEmergencyLoading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                <span>Verifying Emergency Access...</span>
+                            }
+                            else
+                            {
+                                <span><i class="bi bi-unlock-fill me-1"></i> Verify &amp; Access Dashboard</span>
+                            }
+                        </button>
+
+                        <div class="text-center">
+                            <button type="button" class="btn btn-link btn-sm text-muted text-decoration-none" @onclick="HandleSendAdminEmergencyCode" disabled="@isAdminEmergencyLoading">
+                                Didn't receive email? Re-send emergency code
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private string username = "";
     private string password = "";
+    private string twoFactorCode = "";
     private string? errorMessage;
+    private string? successMessage;
     private bool isLoading;
+    private bool isTwoFactorStep = false;
+    private bool isUsingRecoveryCode = false;
+
+    // Forgot Password State
+    private bool showForgotModal = false;
+    private int forgotStep = 1;
+    private string forgotUsernameOrEmail = "";
+    private string? forgotMaskedEmail;
+    private string forgotPin = "";
+    private string forgotNewPassword = "";
+    private string forgotConfirmPassword = "";
+    private string? forgotError;
+    private bool isForgotLoading = false;
+
+    // Admin Emergency Access State
+    private bool showAdminEmergencyModal = false;
+    private bool adminEmergencyCodeSent = false;
+    private string? adminEmergencyMaskedEmail;
+    private string adminEmergencyPin = "";
+    private string? adminEmergencyError;
+    private bool isAdminEmergencyLoading = false;
 
     protected override void OnInitialized()
     {
@@ -105,9 +416,18 @@
         }
     }
 
+    private async Task Handle2FaKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(twoFactorCode))
+        {
+            await Handle2FaVerifyAsync();
+        }
+    }
+
     private async Task HandleLoginAsync()
     {
         errorMessage = null;
+        successMessage = null;
 
         if (string.IsNullOrWhiteSpace(username))
         {
@@ -125,7 +445,14 @@
         try
         {
             var auth = await UserService.AuthenticateAsync(new LoginDto(username.Trim(), password.Trim()));
-            if (auth.Success && auth.User != null)
+            if (auth.RequiresTwoFactor)
+            {
+                // Transition to Step 2
+                isTwoFactorStep = true;
+                twoFactorCode = "";
+                errorMessage = null;
+            }
+            else if (auth.Success && auth.User != null)
             {
                 UserSession.SetCurrentUser(auth.User);
                 Navigation.NavigateTo("");
@@ -142,6 +469,234 @@
         finally
         {
             isLoading = false;
+        }
+    }
+
+    private async Task Handle2FaVerifyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(twoFactorCode))
+        {
+            errorMessage = "Please enter the verification code.";
+            return;
+        }
+
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            var auth = await UserService.VerifyTwoFactorLoginAsync(username.Trim(), twoFactorCode.Trim());
+            if (auth.Success && auth.User != null)
+            {
+                UserSession.SetCurrentUser(auth.User);
+                Navigation.NavigateTo("");
+            }
+            else
+            {
+                errorMessage = auth.ErrorMessage ?? "Invalid two-factor code. Please try again.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Verification error: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ToggleRecoveryCodeMode()
+    {
+        isUsingRecoveryCode = !isUsingRecoveryCode;
+        twoFactorCode = "";
+        errorMessage = null;
+    }
+
+    private void BackToLogin()
+    {
+        isTwoFactorStep = false;
+        isUsingRecoveryCode = false;
+        twoFactorCode = "";
+        errorMessage = null;
+    }
+
+    // ========================================================
+    // Forgot Password Handlers
+    // ========================================================
+    private void OpenForgotPassword()
+    {
+        showForgotModal = true;
+        forgotStep = 1;
+        forgotUsernameOrEmail = username; // prefill if typed
+        forgotPin = "";
+        forgotNewPassword = "";
+        forgotConfirmPassword = "";
+        forgotError = null;
+    }
+
+    private void CloseForgotModal()
+    {
+        showForgotModal = false;
+    }
+
+    private async Task HandleSendForgotPin()
+    {
+        forgotError = null;
+        if (string.IsNullOrWhiteSpace(forgotUsernameOrEmail))
+        {
+            forgotError = "Please enter your username or email address.";
+            return;
+        }
+
+        isForgotLoading = true;
+        try
+        {
+            var result = await UserService.RequestPasswordResetOtpAsync(forgotUsernameOrEmail.Trim());
+            if (result.Success)
+            {
+                forgotMaskedEmail = result.MaskedEmail;
+                forgotStep = 2;
+                forgotPin = "";
+            }
+            else
+            {
+                forgotError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            forgotError = $"Failed to send reset code: {ex.Message}";
+        }
+        finally
+        {
+            isForgotLoading = false;
+        }
+    }
+
+    private async Task HandleResetPasswordSubmit()
+    {
+        forgotError = null;
+        if (string.IsNullOrWhiteSpace(forgotPin) || forgotPin.Trim().Length != 6)
+        {
+            forgotError = "Please enter the valid 6-digit code received on your email.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(forgotNewPassword) || forgotNewPassword.Length < 6)
+        {
+            forgotError = "New password must be at least 6 characters long.";
+            return;
+        }
+
+        if (forgotNewPassword != forgotConfirmPassword)
+        {
+            forgotError = "Passwords do not match.";
+            return;
+        }
+
+        isForgotLoading = true;
+        try
+        {
+            var result = await UserService.ConfirmPasswordResetAsync(
+                forgotUsernameOrEmail.Trim(),
+                forgotPin.Trim(),
+                forgotNewPassword.Trim());
+
+            if (result.Success)
+            {
+                showForgotModal = false;
+                successMessage = "Password successfully reset! Please sign in with your new password.";
+                password = "";
+            }
+            else
+            {
+                forgotError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            forgotError = $"Reset failed: {ex.Message}";
+        }
+        finally
+        {
+            isForgotLoading = false;
+        }
+    }
+
+    // ========================================================
+    // Admin Emergency Access Handlers
+    // ========================================================
+    private void OpenAdminEmergency()
+    {
+        showAdminEmergencyModal = true;
+        adminEmergencyCodeSent = false;
+        adminEmergencyPin = "";
+        adminEmergencyError = null;
+    }
+
+    private void CloseAdminEmergencyModal()
+    {
+        showAdminEmergencyModal = false;
+    }
+
+    private async Task HandleSendAdminEmergencyCode()
+    {
+        adminEmergencyError = null;
+        isAdminEmergencyLoading = true;
+        try
+        {
+            var result = await UserService.RequestAdminEmergencyOtpAsync();
+            if (result.Success)
+            {
+                adminEmergencyCodeSent = true;
+                adminEmergencyMaskedEmail = result.MaskedEmail;
+            }
+            else
+            {
+                adminEmergencyError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            adminEmergencyError = $"Emergency dispatch failed: {ex.Message}";
+        }
+        finally
+        {
+            isAdminEmergencyLoading = false;
+        }
+    }
+
+    private async Task HandleVerifyAdminEmergencyCode()
+    {
+        adminEmergencyError = null;
+        if (string.IsNullOrWhiteSpace(adminEmergencyPin))
+        {
+            adminEmergencyError = "Please enter the emergency code.";
+            return;
+        }
+
+        isAdminEmergencyLoading = true;
+        try
+        {
+            var auth = await UserService.VerifyAdminEmergencyOtpAsync(adminEmergencyPin.Trim());
+            if (auth.Success && auth.User != null)
+            {
+                showAdminEmergencyModal = false;
+                UserSession.SetCurrentUser(auth.User);
+                Navigation.NavigateTo("");
+            }
+            else
+            {
+                adminEmergencyError = auth.ErrorMessage ?? "Invalid or expired emergency code.";
+            }
+        }
+        catch (Exception ex)
+        {
+            adminEmergencyError = $"Verification failed: {ex.Message}";
+        }
+        finally
+        {
+            isAdminEmergencyLoading = false;
         }
     }
 }

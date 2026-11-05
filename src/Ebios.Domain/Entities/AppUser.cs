@@ -20,6 +20,11 @@ public class AppUser
     // Security & 2FA
     public bool TwoFactorEnabled { get; set; } = false;
     public string? TwoFactorSecret { get; set; }
+    public string? TwoFactorRecoveryCodes { get; set; }
+    public string? PasswordResetOtp { get; set; }
+    public DateTime? PasswordResetOtpExpiry { get; set; }
+    public string? EmergencyLoginOtp { get; set; }
+    public DateTime? EmergencyLoginOtpExpiry { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

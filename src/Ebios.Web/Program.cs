@@ -2,6 +2,7 @@ using Ebios.Application.Interfaces;
 using Ebios.Infrastructure.Data;
 using Ebios.Infrastructure.EbiosSoap;
 using Ebios.Infrastructure.Services;
+using Ebios.Web.Services;
 using Ebios.Web;
 using Ebios.Web.Components;
 using Ebios.Web.Endpoints;
@@ -25,6 +26,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHttpClient<IEbiosSoapService, EbiosSoapService>();
 
 // 3. Register Application Services (Dependency Injection)
+builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IAreaService, AreaService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDeviceService, DeviceService>();
@@ -34,6 +36,8 @@ builder.Services.AddScoped<IRosterService, RosterService>();
 builder.Services.AddScoped<IAttendanceProcessingService, AttendanceProcessingService>();
 builder.Services.AddScoped<IAttendanceService, AttendanceService>();
 builder.Services.AddScoped<IBiometricFormService, BiometricFormService>();
+builder.Services.AddScoped<ISftpAttendanceService, SftpAttendanceService>();
+builder.Services.AddHostedService<SftpAttendanceSchedulerWorker>();
 builder.Services.AddScoped<Ebios.Web.Services.UserSessionService>();
 
 var app = builder.Build();

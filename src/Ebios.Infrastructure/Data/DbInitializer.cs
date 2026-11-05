@@ -56,6 +56,23 @@ public static class DbInitializer
                 ALTER TABLE ""Employees"" ALTER COLUMN ""SubAreaId"" SET NOT NULL;
                 ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""CanManageEmployees"" boolean NOT NULL DEFAULT true;
                 ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""CanManageShifts"" boolean NOT NULL DEFAULT true;
+                ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""TwoFactorRecoveryCodes"" text;
+                ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""PasswordResetOtp"" text;
+                ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""PasswordResetOtpExpiry"" timestamp with time zone;
+                ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""EmergencyLoginOtp"" text;
+                ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""EmergencyLoginOtpExpiry"" timestamp with time zone;
+            ");
+
+            // Sync admin email from ADMIN_EMERGENCY_EMAIL in .env if configured
+            string? adminEmergencyEmail = Environment.GetEnvironmentVariable("ADMIN_EMERGENCY_EMAIL");
+            if (!string.IsNullOrWhiteSpace(adminEmergencyEmail))
+            {
+                await context.Database.ExecuteSqlRawAsync(
+                    @"UPDATE ""Users"" SET ""Email"" = {0} WHERE ""Username"" = 'admin' AND (""Email"" = 'admin@ecl.gov.in' OR ""Email"" IS NULL OR ""Email"" = '');",
+                    adminEmergencyEmail.Trim());
+            }
+
+            await context.Database.ExecuteSqlRawAsync(@"
 
                 -- AttendanceLogs Table
                 CREATE TABLE IF NOT EXISTS ""AttendanceLogs"" (

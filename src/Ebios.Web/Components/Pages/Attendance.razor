@@ -5,6 +5,8 @@
 @inject IShiftService ShiftService
 @inject IEmployeeService EmployeeService
 @inject IAreaService AreaService
+@inject ISftpAttendanceService SftpService
+@inject IConfiguration Configuration
 @inject UserSessionService UserSession
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -52,6 +54,10 @@
                     <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
                 </svg>
                 <span>Export CSV</span>
+            </button>
+            <button class="btn btn-outline-info btn-sm" @onclick="OpenSftpModal" title="Send standardized daily attendance CSV via SFTP">
+                <i class="bi bi-cloud-arrow-up me-1"></i>
+                <span>Push to SFTP</span>
             </button>
             <button class="btn btn-outline-primary btn-sm" @onclick="RecalculateMusterRollAsync" disabled="@isRecalculating">
                 @if (isRecalculating)
@@ -1019,6 +1025,108 @@ else
     </div>
 }
 
+<!-- SFTP Sync Modal -->
+@if (isSftpModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1055;">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white py-3">
+                    <h5 class="modal-title fw-bold mb-0">
+                        <i class="bi bi-cloud-arrow-up me-2 text-info"></i> SFTP Attendance Dispatch
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseSftpModal" disabled="@isSftpTransmitting"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <p class="text-muted small mb-3">
+                        Transmit standardized CSV attendance report directly to the remote SFTP server in the requested format (<code>Employee Id, Attendance date, Capture_date in, Employee time in...</code>).
+                    </p>
+
+                    <div class="bg-light p-3 rounded border mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="small fw-semibold text-muted">SFTP Host:</span>
+                            <span class="badge bg-secondary font-monospace">@sftpHostPreview:@sftpPortPreview</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="small text-muted">User / Directory:</span>
+                            <span class="small font-monospace text-dark">@sftpUserPreview &rarr; @sftpDirPreview</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="small text-muted">Scheduled Trigger:</span>
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                <i class="bi bi-clock me-1"></i> Daily at @sftpScheduleTimePreview
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Attendance Date to Transmit</label>
+                        <input type="date" class="form-control" @bind="sftpTargetDate" disabled="@isSftpTransmitting" />
+                        <div class="form-text text-muted">
+                            Exports records matching this date formatted as <code>dd.MM.yyyy</code> with time in/out.
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 mb-3">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="TestSftpConnectionAsync" disabled="@isSftpTesting">
+                            @if (isSftpTesting)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                <span>Testing...</span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-plug me-1"></i>
+                                <span>Test Connection</span>
+                            }
+                        </button>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(sftpTestStatus))
+                    {
+                        <div class="alert @(sftpTestStatusSuccess ? "alert-success" : "alert-danger") py-2 small mb-3">
+                            @(sftpTestStatusSuccess ? "✅ " : "❌ ") @sftpTestStatus
+                        </div>
+                    }
+
+                    @if (sftpTransmitResult != null)
+                    {
+                        <div class="alert @(sftpTransmitResult.Success ? "alert-success" : "alert-danger") py-2 small mb-0">
+                            @if (sftpTransmitResult.Success)
+                            {
+                                <div class="fw-bold mb-1">✅ Upload Successful</div>
+                                <div><strong>File:</strong> <code>@sftpTransmitResult.RemoteFilePath</code></div>
+                                <div><strong>Records Sent:</strong> @sftpTransmitResult.RecordCount</div>
+                                <div class="text-muted small mt-1">Uploaded at @sftpTransmitResult.TransmittedAt?.ToLocalTime().ToString("HH:mm:ss")</div>
+                            }
+                            else
+                            {
+                                <div class="fw-bold mb-1">❌ Upload Failed</div>
+                                <div>@sftpTransmitResult.Message</div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer bg-light py-2">
+                    <button type="button" class="btn btn-secondary btn-sm" @onclick="CloseSftpModal" disabled="@isSftpTransmitting">Close</button>
+                    <button type="button" class="btn btn-primary btn-sm" @onclick="TransmitSftpAsync" disabled="@isSftpTransmitting">
+                        @if (isSftpTransmitting)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Transmitting...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-cloud-arrow-up me-1"></i>
+                            <span>Transmit Now</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private string activeMainTab = "muster";
 
@@ -1075,6 +1183,86 @@ else
     private string bulkRegularizeCsvText = string.Empty;
     private string? bulkRegularizeModalError;
     private string? bulkRegularizeModalSuccess;
+
+    // SFTP Dispatch State
+    private bool isSftpModalOpen = false;
+    private bool isSftpTesting = false;
+    private bool isSftpTransmitting = false;
+    private DateTime sftpTargetDate = UserSessionService.GetIstToday();
+    private string? sftpTestStatus;
+    private bool sftpTestStatusSuccess;
+    private SftpExportResultDto? sftpTransmitResult;
+    private string sftpHostPreview = "127.0.0.1";
+    private int sftpPortPreview = 22;
+    private string sftpUserPreview = "tester";
+    private string sftpDirPreview = "/";
+    private string sftpScheduleTimePreview = "23:45";
+
+    private void OpenSftpModal()
+    {
+        sftpTargetDate = musterToDate;
+        sftpTestStatus = null;
+        sftpTransmitResult = null;
+        sftpHostPreview = Environment.GetEnvironmentVariable("SFTP_HOST") ?? Configuration["SftpServer:Host"] ?? "127.0.0.1";
+        string portStr = Environment.GetEnvironmentVariable("SFTP_PORT") ?? Configuration["SftpServer:Port"] ?? "22";
+        int.TryParse(portStr, out sftpPortPreview);
+        if (sftpPortPreview <= 0) sftpPortPreview = 22;
+        sftpUserPreview = Environment.GetEnvironmentVariable("SFTP_USERNAME") ?? Configuration["SftpServer:UserName"] ?? "tester";
+        sftpDirPreview = Environment.GetEnvironmentVariable("SFTP_REMOTE_PATH") ?? Configuration["SftpServer:RemotePath"] ?? "/";
+        sftpScheduleTimePreview = Environment.GetEnvironmentVariable("SFTP_SCHEDULE_TIME") ?? Configuration["SftpServer:DailyScheduledTime"] ?? "23:45";
+        isSftpModalOpen = true;
+    }
+
+    private void CloseSftpModal()
+    {
+        isSftpModalOpen = false;
+    }
+
+    private async Task TestSftpConnectionAsync()
+    {
+        isSftpTesting = true;
+        sftpTestStatus = null;
+        try
+        {
+            var (success, msg) = await SftpService.TestConnectionAsync();
+            sftpTestStatusSuccess = success;
+            sftpTestStatus = msg;
+        }
+        catch (Exception ex)
+        {
+            sftpTestStatusSuccess = false;
+            sftpTestStatus = ex.Message;
+        }
+        finally
+        {
+            isSftpTesting = false;
+        }
+    }
+
+    private async Task TransmitSftpAsync()
+    {
+        isSftpTransmitting = true;
+        sftpTransmitResult = null;
+        try
+        {
+            int? areaId = UserSession.IsAreaAdmin ? UserSession.CurrentUser?.AreaId : null;
+            int? subAreaId = musterSubAreaId > 0 ? musterSubAreaId : (UserSession.IsUnitAdmin ? UserSession.CurrentUser?.SubAreaId : null);
+
+            sftpTransmitResult = await SftpService.ExportAndUploadDailyAttendanceAsync(sftpTargetDate, areaId, subAreaId);
+            if (sftpTransmitResult.Success)
+            {
+                successMessage = $"Transmitted {sftpTransmitResult.RecordCount} attendance records to SFTP server.";
+            }
+        }
+        catch (Exception ex)
+        {
+            sftpTransmitResult = new SftpExportResultDto(false, ex.Message);
+        }
+        finally
+        {
+            isSftpTransmitting = false;
+        }
+    }
 
     private string? successMessage;
     private string? errorMessage;
