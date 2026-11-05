@@ -11,7 +11,7 @@ public interface IBiometricFormService
     Task<BulkBiometricImportResult> ImportBulkCsvAsync(Stream csvStream, string updatedBy);
     Task<BulkBiometricImportResult> ImportBulkZipAsync(Stream zipStream, string updatedBy);
     byte[] GenerateBulkCsvTemplate();
-    Task<List<BiometricFormDto>> GetFormsForBulkPrintAsync(int? areaId, int? subAreaId, string? search);
+    Task<List<BiometricFormDto>> GetFormsForBulkPrintAsync(int? areaId, int? subAreaId, string? search, bool? isFlagged = null);
     string GetPhysicalStoragePath(string empCode);
 }
 

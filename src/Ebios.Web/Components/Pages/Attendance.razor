@@ -182,6 +182,34 @@
     </div>
 
     <!-- Muster Roll Filter Bar -->
+    @if (musterList.Any(m => m.IsFlagged))
+    {
+        var flaggedMusterCount = musterList.Count(m => m.IsFlagged);
+        <div class="alert alert-warning shadow-sm d-flex align-items-center justify-content-between mb-3 py-2 px-3">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-4">🚩</span>
+                <div>
+                    <strong class="d-block">@flaggedMusterCount Flagged (Unregistered Worker) Record(s) Detected in Daily Report</strong>
+                    <span class="small text-muted">Workers have swiped on turnstiles whose employee profiles are not yet onboarded.</span>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                @if (musterFlagFilter == "Flagged")
+                {
+                    <button class="btn btn-outline-dark btn-sm fw-semibold" @onclick="@(() => musterFlagFilter = "All")">
+                        Show All Workers
+                    </button>
+                }
+                else
+                {
+                    <button class="btn btn-warning btn-sm fw-bold shadow-sm" @onclick="@(() => musterFlagFilter = "Flagged")">
+                        🚩 Filter Flagged Only (@flaggedMusterCount)
+                    </button>
+                }
+            </div>
+        </div>
+    }
+
     <div class="card shadow-sm mb-4">
         <div class="card-body">
             <div class="row g-2 align-items-end">
@@ -206,7 +234,7 @@
                     </select>
                 </div>
 
-                <div class="col-6 col-md-2">
+                <div class="col-6 col-md-1">
                     <label class="form-label small fw-semibold">Shift</label>
                     <select class="form-select form-select-sm" @bind="musterShiftCode" @bind:after="LoadMusterRollAsync">
                         <option value="All">All Shifts</option>
@@ -217,7 +245,7 @@
                     </select>
                 </div>
 
-                <div class="col-6 col-md-2">
+                <div class="col-6 col-md-1">
                     <label class="form-label small fw-semibold">Status</label>
                     <select class="form-select form-select-sm" @bind="musterStatus" @bind:after="LoadMusterRollAsync">
                         <option value="All">All Statuses</option>
@@ -226,6 +254,15 @@
                         <option value="Double Shift">Double Shift / OT</option>
                         <option value="Half Day">Half Day</option>
                         <option value="Single Punch">Missed OUT</option>
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold">Flag Status</label>
+                    <select class="form-select form-select-sm" @bind="musterFlagFilter">
+                        <option value="All">All Workers</option>
+                        <option value="Flagged">🚩 Flagged Only (Unregistered)</option>
+                        <option value="NonFlagged">✅ Registered Only</option>
                     </select>
                 </div>
 
@@ -300,7 +337,7 @@
                                     }
                                     @if (m.IsFlagged)
                                     {
-                                        <span class="badge bg-warning text-dark ms-1" title="Unregistered Badge">⚠️ Flagged</span>
+                                        <span class="badge bg-warning text-dark ms-1" title="Unregistered Badge">🚩 Flagged: Unregistered</span>
                                     }
                                 </td>
                                 <td>
@@ -1004,6 +1041,7 @@ else
     private int musterSubAreaId = 0;
     private string musterShiftCode = "All";
     private string musterStatus = "All";
+    private string musterFlagFilter = "All";
     private string musterSearchTerm = string.Empty;
     private bool isMusterLoading = false;
     private bool isRecalculating = false;
@@ -1116,13 +1154,34 @@ else
         }
     }
 
-    private List<DailyMusterRollDto> FilteredMusterRoll => musterList
-        .Where(m => string.IsNullOrWhiteSpace(musterSearchTerm) ||
-                    m.EmpCode.Contains(musterSearchTerm, StringComparison.OrdinalIgnoreCase) ||
-                    (m.EmployeeName != null && m.EmployeeName.Contains(musterSearchTerm, StringComparison.OrdinalIgnoreCase)) ||
-                    (m.InDeviceName != null && m.InDeviceName.Contains(musterSearchTerm, StringComparison.OrdinalIgnoreCase)) ||
-                    (m.OutDeviceName != null && m.OutDeviceName.Contains(musterSearchTerm, StringComparison.OrdinalIgnoreCase)))
-        .ToList();
+    private List<DailyMusterRollDto> FilteredMusterRoll
+    {
+        get
+        {
+            var list = musterList.AsEnumerable();
+
+            if (musterFlagFilter == "Flagged")
+            {
+                list = list.Where(m => m.IsFlagged);
+            }
+            else if (musterFlagFilter == "NonFlagged")
+            {
+                list = list.Where(m => !m.IsFlagged);
+            }
+
+            if (!string.IsNullOrWhiteSpace(musterSearchTerm))
+            {
+                string s = musterSearchTerm.Trim();
+                list = list.Where(m =>
+                    m.EmpCode.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    (m.EmployeeName != null && m.EmployeeName.Contains(s, StringComparison.OrdinalIgnoreCase)) ||
+                    (m.InDeviceName != null && m.InDeviceName.Contains(s, StringComparison.OrdinalIgnoreCase)) ||
+                    (m.OutDeviceName != null && m.OutDeviceName.Contains(s, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            return list.ToList();
+        }
+    }
 
     private async Task RecalculateMusterRollAsync()
     {

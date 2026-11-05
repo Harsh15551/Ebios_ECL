@@ -30,7 +30,7 @@
                     <!-- Filters (Hidden in Print) -->
                     <div class="card border-0 shadow-sm p-3 mb-4 no-print">
                         <div class="row g-2 align-items-center">
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label class="form-label small fw-semibold mb-1">Mining Area</label>
                                 <select class="form-select form-select-sm" value="@selectedAreaId" @onchange="OnAreaFilterChanged">
                                     <option value="0">All Mining Areas</option>
@@ -40,7 +40,7 @@
                                     }
                                 </select>
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <label class="form-label small fw-semibold mb-1">Colliery Unit</label>
                                 <select class="form-select form-select-sm" value="@selectedSubAreaId" @onchange="OnSubAreaFilterChanged">
                                     <option value="0">All Units</option>
@@ -50,7 +50,15 @@
                                     }
                                 </select>
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
+                                <label class="form-label small fw-semibold mb-1">Flag Status</label>
+                                <select class="form-select form-select-sm" value="@selectedFlagFilter" @onchange="OnFlagFilterChanged">
+                                    <option value="All">All Forms</option>
+                                    <option value="Flagged">🚩 Flagged / Unregistered Only</option>
+                                    <option value="NonFlagged">✅ Registered Workers Only</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
                                 <label class="form-label small fw-semibold mb-1">Search Worker</label>
                                 <div class="input-group input-group-sm">
                                     <input type="text" class="form-control" placeholder="Emp Code or Name..." @bind="searchTerm" @bind:event="oninput" />
@@ -60,6 +68,22 @@
                                 </div>
                             </div>
                         </div>
+
+                        @if (!isLoading && forms.Any())
+                        {
+                            <div class="d-flex gap-2 align-items-center mt-3 pt-2 border-top">
+                                <span class="badge bg-secondary">Total: @forms.Count Forms</span>
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                    ✅ @forms.Count(f => !f.IsFlagged) Registered
+                                </span>
+                                @if (forms.Any(f => f.IsFlagged))
+                                {
+                                    <span class="badge bg-warning-subtle text-dark border border-warning">
+                                        🚩 @forms.Count(f => f.IsFlagged) Flagged (Unregistered)
+                                    </span>
+                                }
+                            </div>
+                        }
                     </div>
 
                     @if (isLoading)
@@ -82,6 +106,22 @@
                             @foreach (var form in forms)
                             {
                                 <div class="ecl-biometric-template border border-dark p-3 p-md-4 bg-white mb-5 page-break-after">
+                                    <div class="d-flex justify-content-between align-items-center mb-2 no-print border-bottom pb-1">
+                                        <span class="small text-muted font-monospace">EmpCode: <strong>@form.EmpCode</strong></span>
+                                        @if (form.IsFlagged)
+                                        {
+                                            <span class="badge bg-warning text-dark border border-warning">
+                                                🚩 Flagged: Unregistered Worker (No Master Record)
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                ✅ Registered Worker
+                                            </span>
+                                        }
+                                    </div>
+
                                     <!-- Official Document Title -->
                                     <div class="text-center mb-3 pb-2 border-bottom border-dark">
                                         <h5 class="fw-bold text-uppercase mb-1" style="font-family: 'Times New Roman', serif;">
@@ -263,6 +303,7 @@
 
     private int selectedAreaId = 0;
     private int selectedSubAreaId = 0;
+    private string selectedFlagFilter = "All";
     private string searchTerm = "";
     private bool isLoading = false;
 
@@ -309,15 +350,29 @@
         }
     }
 
+    private async Task OnFlagFilterChanged(ChangeEventArgs e)
+    {
+        selectedFlagFilter = e.Value?.ToString() ?? "All";
+        await LoadFormsAsync();
+    }
+
     private async Task LoadFormsAsync()
     {
         isLoading = true;
         try
         {
+            bool? isFlagged = selectedFlagFilter switch
+            {
+                "Flagged" => true,
+                "NonFlagged" => false,
+                _ => null
+            };
+
             forms = await BiometricService.GetFormsForBulkPrintAsync(
                 selectedAreaId > 0 ? selectedAreaId : null,
                 selectedSubAreaId > 0 ? selectedSubAreaId : null,
-                string.IsNullOrWhiteSpace(searchTerm) ? null : searchTerm
+                string.IsNullOrWhiteSpace(searchTerm) ? null : searchTerm,
+                isFlagged
             );
         }
         finally

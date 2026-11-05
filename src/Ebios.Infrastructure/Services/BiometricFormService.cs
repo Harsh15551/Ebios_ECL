@@ -266,6 +266,9 @@ public class BiometricFormService : IBiometricFormService
             return result;
         }
 
+        var allSubAreas = await _context.SubAreas.Include(s => s.Area).AsNoTracking().ToListAsync();
+        var allAreas = await _context.Areas.AsNoTracking().ToListAsync();
+
         var headers = headerLine.Split(',').Select(h => h.Trim().Trim('"').ToLowerInvariant()).ToList();
         int idxEmpCode = headers.FindIndex(h => h.Contains("emp") || h.Contains("id"));
         if (idxEmpCode == -1)
@@ -323,10 +326,6 @@ public class BiometricFormService : IBiometricFormService
                     _context.EmployeeBiometricForms.Add(form);
                 }
 
-                // Link employee if exists
-                var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToLower() == empCode.ToLower());
-                if (emp != null) form.EmployeeId = emp.Id;
-
                 if (idxName >= 0 && idxName < cols.Count && !string.IsNullOrWhiteSpace(cols[idxName])) form.EmployeeName = cols[idxName].Trim();
                 if (idxAadhaar >= 0 && idxAadhaar < cols.Count && !string.IsNullOrWhiteSpace(cols[idxAadhaar])) form.AadhaarNumber = cols[idxAadhaar].Trim();
                 if (idxCategory >= 0 && idxCategory < cols.Count && !string.IsNullOrWhiteSpace(cols[idxCategory])) form.Category = cols[idxCategory].Trim();
@@ -355,6 +354,105 @@ public class BiometricFormService : IBiometricFormService
                 form.UpdatedBy = updatedBy;
                 form.UpdatedAt = DateTime.UtcNow;
 
+                // Location validation against ECL SubAreas
+                SubArea? matchedSubArea = null;
+                string locCandidate = form.DepartmentUnit?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(locCandidate)) locCandidate = form.PlaceOfPosting?.Trim() ?? "";
+
+                if (!string.IsNullOrWhiteSpace(locCandidate))
+                {
+                    if (int.TryParse(locCandidate, out int sid))
+                    {
+                        matchedSubArea = allSubAreas.FirstOrDefault(s => s.Id == sid);
+                    }
+                    if (matchedSubArea == null)
+                    {
+                        matchedSubArea = allSubAreas.FirstOrDefault(s =>
+                            s.SubAreaName.Equals(locCandidate, StringComparison.OrdinalIgnoreCase) ||
+                            s.SubAreaCode.Equals(locCandidate, StringComparison.OrdinalIgnoreCase));
+                    }
+                    if (matchedSubArea == null)
+                    {
+                        var areaMatch = allAreas.FirstOrDefault(a => a.AreaName.Equals(locCandidate, StringComparison.OrdinalIgnoreCase));
+                        if (areaMatch != null)
+                        {
+                            matchedSubArea = allSubAreas.FirstOrDefault(s => s.AreaId == areaMatch.Id);
+                        }
+                    }
+
+                    if (matchedSubArea == null)
+                    {
+                        result.Errors.Add($"Line {lineNum} ({empCode}): Location '{locCandidate}' does not exist in ECL Sub-Areas.");
+                    }
+                }
+
+                // Check worker existence: update if exists, or auto-onboard if new
+                bool isExecutive = !string.IsNullOrWhiteSpace(form.Category) && 
+                                   form.Category.Contains("Executive", StringComparison.OrdinalIgnoreCase) && 
+                                   !form.Category.Contains("Non", StringComparison.OrdinalIgnoreCase);
+
+                var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToLower() == empCode.ToLower());
+                if (emp != null)
+                {
+                    // Existing worker: update details
+                    if (!string.IsNullOrWhiteSpace(form.EmployeeName)) emp.FullName = form.EmployeeName;
+                    if (!string.IsNullOrWhiteSpace(form.PositionDesignation)) emp.Designation = form.PositionDesignation;
+                    if (matchedSubArea != null) emp.SubAreaId = matchedSubArea.Id;
+                    if (isExecutive) emp.IsHigherAuthority = true;
+
+                    form.EmployeeId = emp.Id;
+                }
+                else
+                {
+                    // Direct onboard worker from bulk template
+                    int assignedSubAreaId = matchedSubArea?.Id ?? (allSubAreas.FirstOrDefault()?.Id ?? 1);
+                    var newEmp = new Employee
+                    {
+                        EmpCode = empCode.ToUpperInvariant(),
+                        FullName = !string.IsNullOrWhiteSpace(form.EmployeeName) ? form.EmployeeName : empCode.ToUpperInvariant(),
+                        Designation = !string.IsNullOrWhiteSpace(form.PositionDesignation) ? form.PositionDesignation : "Colliery Worker",
+                        SubAreaId = assignedSubAreaId,
+                        IsHigherAuthority = isExecutive,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    _context.Employees.Add(newEmp);
+                    await _context.SaveChangesAsync();
+
+                    form.EmployeeId = newEmp.Id;
+
+                    // Retroactively link past flagged punches & muster summaries
+                    try
+                    {
+                        var pastPunches = await _context.AttendanceLogs
+                            .Where(l => l.EmpCode.ToUpper() == newEmp.EmpCode && (l.EmployeeId == null || l.IsFlagged))
+                            .ToListAsync();
+                        foreach (var p in pastPunches)
+                        {
+                            p.EmployeeId = newEmp.Id;
+                            p.Status = "Verified";
+                            p.IsFlagged = false;
+                        }
+
+                        var pastSummaries = await _context.AttendanceDailySummaries
+                            .Where(s => s.EmpCode.ToUpper() == newEmp.EmpCode && (s.EmployeeId == null || s.IsFlagged))
+                            .ToListAsync();
+                        foreach (var s in pastSummaries)
+                        {
+                            s.EmployeeId = newEmp.Id;
+                            s.EmployeeName = newEmp.FullName;
+                            s.Designation = newEmp.Designation;
+                            s.IsVerified = true;
+                            s.IsFlagged = false;
+                            s.IsHigherAuthority = newEmp.IsHigherAuthority;
+                        }
+                    }
+                    catch (Exception retroEx)
+                    {
+                        _logger.LogWarning("Retroactive linking warning for worker {Code}: {Msg}", newEmp.EmpCode, retroEx.Message);
+                    }
+                }
+
                 result.SuccessCount++;
             }
             catch (Exception ex)
@@ -365,7 +463,7 @@ public class BiometricFormService : IBiometricFormService
         }
 
         await _context.SaveChangesAsync();
-        result.SuccessSummaries.Add($"Successfully imported/updated particulars for {result.SuccessCount} worker forms.");
+        result.SuccessSummaries.Add($"Successfully imported/updated particulars and synced worker records for {result.SuccessCount} forms.");
         return result;
     }
 
@@ -482,21 +580,38 @@ public class BiometricFormService : IBiometricFormService
         return Encoding.UTF8.GetBytes(sb.ToString());
     }
 
-    public async Task<List<BiometricFormDto>> GetFormsForBulkPrintAsync(int? areaId, int? subAreaId, string? search)
+    public async Task<List<BiometricFormDto>> GetFormsForBulkPrintAsync(int? areaId, int? subAreaId, string? search, bool? isFlagged = null)
     {
         var query = _context.EmployeeBiometricForms
             .Include(f => f.Employee)
                 .ThenInclude(e => e!.SubArea)
+                    .ThenInclude(s => s!.Area)
             .AsNoTracking()
             .AsQueryable();
 
+        if (isFlagged.HasValue)
+        {
+            if (isFlagged.Value)
+            {
+                // Flagged = worker has not yet been onboarded or linked
+                query = query.Where(f => f.EmployeeId == null);
+            }
+            else
+            {
+                // Non-flagged = officially registered employee
+                query = query.Where(f => f.EmployeeId != null);
+            }
+        }
+
         if (subAreaId.HasValue && subAreaId.Value > 0)
         {
-            query = query.Where(f => f.Employee != null && f.Employee.SubAreaId == subAreaId.Value);
+            query = query.Where(f => (f.Employee != null && f.Employee.SubAreaId == subAreaId.Value) ||
+                                     (f.Employee == null && _context.SubAreas.Any(s => s.Id == subAreaId.Value && (f.DepartmentUnit.ToLower() == s.SubAreaName.ToLower() || f.DepartmentUnit.ToLower() == s.SubAreaCode.ToLower()))));
         }
         else if (areaId.HasValue && areaId.Value > 0)
         {
-            query = query.Where(f => f.Employee != null && f.Employee.SubArea != null && f.Employee.SubArea.AreaId == areaId.Value);
+            query = query.Where(f => (f.Employee != null && f.Employee.SubArea != null && f.Employee.SubArea.AreaId == areaId.Value) ||
+                                     (f.Employee == null && _context.SubAreas.Any(s => s.AreaId == areaId.Value && ((s.Area != null && f.PlaceOfPosting.ToLower() == s.Area.AreaName.ToLower()) || f.DepartmentUnit.ToLower() == s.SubAreaName.ToLower()))));
         }
 
         if (!string.IsNullOrWhiteSpace(search))

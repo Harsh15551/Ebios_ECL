@@ -60,6 +60,7 @@ public class BiometricFormDto
 
     // Status & Audit
     public bool IsCompleted { get; set; }
+    public bool IsFlagged => !EmployeeId.HasValue;
     public string? UpdatedBy { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }

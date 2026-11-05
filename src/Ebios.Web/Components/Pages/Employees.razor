@@ -98,6 +98,30 @@
     </div>
 }
 
+@if (flaggedPunchesCount > 0)
+{
+    <div class="alert alert-warning shadow-sm d-flex align-items-center justify-content-between mb-4">
+        <div class="d-flex align-items-center">
+            <span class="fs-4 me-3">🚩</span>
+            <div>
+                <strong class="d-block">@flaggedPunchesCount Flagged Unregistered Worker Punches Detected</strong>
+                <span class="small text-muted">Workers have swiped at colliery turnstiles without an active employee master profile. Onboard them or import bulk forms to resolve.</span>
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="/attendance" class="btn btn-warning btn-sm fw-bold px-3">
+                Review in Attendance
+            </a>
+            @if (UserSession.CanManageEmployees)
+            {
+                <button class="btn btn-primary btn-sm fw-bold px-3" @onclick="OpenCreateModal">
+                    Onboard Worker
+                </button>
+            }
+        </div>
+    </div>
+}
+
 <!-- Filters Bar -->
 <div class="card shadow-sm mb-4">
     <div class="card-body">
@@ -1122,6 +1146,7 @@ else
     private string searchTerm = string.Empty;
     private int subAreaFilter = 0;
     private string authorityFilter = "all";
+    private int flaggedPunchesCount = 0;
 
     // Alerts
     private string? successMessage;
@@ -1251,6 +1276,7 @@ else
 
             employees = await EmployeeService.GetEmployeesAsync(areaIdScope, subAreaIdScope);
             availableDesignations = await EmployeeService.GetDesignationsAsync();
+            flaggedPunchesCount = await AttendanceService.GetFlaggedCountAsync(areaIdScope, subAreaIdScope);
         }
         catch (Exception ex)
         {

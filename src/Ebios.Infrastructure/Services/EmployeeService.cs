@@ -147,11 +147,6 @@ public class EmployeeService : IEmployeeService
     public async Task<EmployeeDto> CreateEmployeeAsync(CreateEmployeeDto dto)
     {
         string normalizedCode = dto.EmpCode.Trim().ToUpperInvariant();
-        if (await _context.Employees.AnyAsync(e => e.EmpCode == normalizedCode))
-        {
-            throw new InvalidOperationException($"Worker with Employee Code '{normalizedCode}' already exists.");
-        }
-
         var subArea = await _context.SubAreas.Include(s => s.Area).FirstOrDefaultAsync(s => s.Id == dto.SubAreaId);
         if (subArea == null)
         {
@@ -161,19 +156,36 @@ public class EmployeeService : IEmployeeService
         var additionalIds = dto.AdditionalSubAreaIds?.Where(id => id != dto.SubAreaId).Distinct().ToList() ?? new List<int>();
         string? additionalCsv = additionalIds.Any() ? string.Join(",", additionalIds) : null;
 
-        var employee = new Employee
-        {
-            EmpCode = normalizedCode,
-            FullName = dto.FullName.Trim(),
-            Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "Colliery Worker" : dto.Designation.Trim(),
-            SubAreaId = dto.SubAreaId,
-            AdditionalSubAreaIds = additionalCsv,
-            IsHigherAuthority = dto.IsHigherAuthority,
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow
-        };
+        var existingEmp = await _context.Employees.Include(e => e.SubArea).ThenInclude(s => s!.Area).FirstOrDefaultAsync(e => e.EmpCode == normalizedCode);
+        Employee employee;
 
-        _context.Employees.Add(employee);
+        if (existingEmp != null)
+        {
+            // Employee already exists: update details seamlessly (upsert)
+            existingEmp.FullName = dto.FullName.Trim();
+            if (!string.IsNullOrWhiteSpace(dto.Designation)) existingEmp.Designation = dto.Designation.Trim();
+            existingEmp.SubAreaId = dto.SubAreaId;
+            existingEmp.AdditionalSubAreaIds = additionalCsv;
+            existingEmp.IsHigherAuthority = dto.IsHigherAuthority;
+            existingEmp.IsActive = true;
+            employee = existingEmp;
+        }
+        else
+        {
+            employee = new Employee
+            {
+                EmpCode = normalizedCode,
+                FullName = dto.FullName.Trim(),
+                Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "Colliery Worker" : dto.Designation.Trim(),
+                SubAreaId = dto.SubAreaId,
+                AdditionalSubAreaIds = additionalCsv,
+                IsHigherAuthority = dto.IsHigherAuthority,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.Employees.Add(employee);
+        }
+
         await _context.SaveChangesAsync();
 
         // Retroactively link any past flagged punches and muster roll summaries for this employee code
@@ -901,19 +913,6 @@ public class EmployeeService : IEmployeeService
                     continue;
                 }
 
-                if (existingCodes.Contains(code))
-                {
-                    var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToUpper() == code);
-                    if (emp != null)
-                    {
-                        if (!string.IsNullOrWhiteSpace(entry.FullName)) emp.FullName = entry.FullName.Trim();
-                        if (!string.IsNullOrWhiteSpace(entry.Designation)) emp.Designation = entry.Designation.Trim();
-                        if (entry.IsHigherAuthority) emp.IsHigherAuthority = true;
-                        successCount++;
-                    }
-                    continue;
-                }
-
                 int resolvedSubAreaId = 0;
                 if (!string.IsNullOrWhiteSpace(entry.CollieryNameOrId))
                 {
@@ -928,6 +927,11 @@ public class EmployeeService : IEmployeeService
                                                                 s.SubAreaCode.Equals(target, StringComparison.OrdinalIgnoreCase));
                         if (match != null) resolvedSubAreaId = match.Id;
                     }
+
+                    if (resolvedSubAreaId == 0)
+                    {
+                        errors.Add($"Worker {entry.EmpCode}: Location '{entry.CollieryNameOrId}' does not exist in ECL Sub-Areas.");
+                    }
                 }
 
                 if (resolvedSubAreaId == 0 && defaultSubAreaId.HasValue && defaultSubAreaId.Value > 0)
@@ -938,6 +942,20 @@ public class EmployeeService : IEmployeeService
                 if (resolvedSubAreaId == 0)
                 {
                     resolvedSubAreaId = subAreas.FirstOrDefault()?.Id ?? 1;
+                }
+
+                if (existingCodes.Contains(code))
+                {
+                    var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToUpper() == code);
+                    if (emp != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(entry.FullName)) emp.FullName = entry.FullName.Trim();
+                        if (!string.IsNullOrWhiteSpace(entry.Designation)) emp.Designation = entry.Designation.Trim();
+                        if (entry.IsHigherAuthority) emp.IsHigherAuthority = true;
+                        if (resolvedSubAreaId > 0) emp.SubAreaId = resolvedSubAreaId;
+                        successCount++;
+                    }
+                    continue;
                 }
 
                 var newEmp = new Employee
