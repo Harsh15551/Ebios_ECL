@@ -1,4 +1,5 @@
-EmpCode,DeviceSerialNumber
-ECL-7001,DEV-BIO-001
-ECL-7002,DEV-BIO-002
-ECL-7003,ALL
+EmpCode,DeviceSerialNumber,Action
+ECL-7001,DEV-BIO-001,Block
+ECL-7002,DEV-BIO-002,Unblock
+ECL-7003,ALL,Block
+ECL-7004,ALL,Unblock

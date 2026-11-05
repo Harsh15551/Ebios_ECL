@@ -992,15 +992,15 @@ else
     private string searchTerm = string.Empty;
     private int subAreaFilter = 0;
     private string statusFilter = "All";
-    private DateTime? filterFromDate = DateTime.Today.AddDays(-7);
-    private DateTime? filterToDate = DateTime.Today;
+    private DateTime? filterFromDate = UserSessionService.GetIstToday().AddDays(-7);
+    private DateTime? filterToDate = UserSessionService.GetIstToday();
 
     // Muster roll state
     private List<DailyMusterRollDto> musterList = new();
     private List<ShiftMasterDto> masterShifts = new();
     private MusterRollKpiDto musterKpis = new(0, 0, 0, 0, 0, 0);
-    private DateTime musterFromDate = DateTime.Today.AddDays(-7);
-    private DateTime musterToDate = DateTime.Today;
+    private DateTime musterFromDate = UserSessionService.GetIstToday().AddDays(-7);
+    private DateTime musterToDate = UserSessionService.GetIstToday();
     private int musterSubAreaId = 0;
     private string musterShiftCode = "All";
     private string musterStatus = "All";
@@ -1044,10 +1044,15 @@ else
     protected override async Task OnInitializedAsync()
     {
         UserSession.OnChange += StateHasChanged;
+
+        // Default To Date to present date according to Indian Standard Time (IST: UTC + 05:30)
+        var istToday = UserSessionService.GetIstToday();
+        UserSession.AttendanceToDate = istToday;
+        musterToDate = istToday;
+        filterToDate = istToday;
+
         musterFromDate = UserSession.AttendanceFromDate;
-        musterToDate = UserSession.AttendanceToDate;
         filterFromDate = UserSession.AttendanceFromDate;
-        filterToDate = UserSession.AttendanceToDate;
 
         await LoadMetadataAsync();
         await LoadMusterRollAsync();

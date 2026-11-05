@@ -63,8 +63,8 @@
             <button class="btn btn-outline-success" @onclick="OpenBulkEmployeeModal">
                 <i class="bi bi-file-earmark-spreadsheet me-1"></i> Bulk Worker Onboard
             </button>
-            <button class="btn btn-outline-danger" @onclick="OpenBulkBlacklistModal">
-                <i class="bi bi-slash-circle me-1"></i> Bulk Gate Lock
+            <button class="btn btn-outline-danger" @onclick="OpenBulkBlacklistModal" title="Control turnstile gate access in bulk (Lock / Unlock)">
+                <i class="bi bi-shield-lock me-1"></i> Turnstile Access Control
             </button>
             <button class="btn btn-primary" @onclick="OpenCreateModal">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
@@ -157,7 +157,6 @@ else
                         <th>Designation / Role</th>
                         <th>Colliery Unit & Area</th>
                         <th style="width: 150px;">Biometric Sync</th>
-                        <th style="width: 100px;">Status</th>
                         <th style="width: 200px;" class="text-end">Actions</th>
                     </tr>
                 </thead>
@@ -165,7 +164,7 @@ else
                     @if (!FilteredEmployees.Any())
                     {
                         <tr>
-                            <td colspan="7" class="text-center py-4 text-muted">
+                            <td colspan="6" class="text-center py-4 text-muted">
                                 No employees found in this jurisdiction matching your filter.
                             </td>
                         </tr>
@@ -217,24 +216,6 @@ else
                                         <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
                                             ● Sync Failed
                                         </span>
-                                    }
-                                </td>
-                                <td>
-                                    @if (emp.IsBlacklisted)
-                                    {
-                                        <span class="badge bg-danger" title="Worker is Blacklisted and physically blocked on turnstiles">🚫 Blacklisted</span>
-                                    }
-                                    else if (!emp.IsActive)
-                                    {
-                                        <span class="badge bg-danger" title="Access blocked on all turnstile machines">🔒 Fully Blocked</span>
-                                    }
-                                    else if (!string.IsNullOrWhiteSpace(emp.BlockedDeviceSerials))
-                                    {
-                                        <span class="badge bg-warning text-dark" title="Blocked on specific machines: @emp.BlockedDeviceSerials">⚠️ Partial Gate Access</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge bg-success">Active / Allowed</span>
                                     }
                                 </td>
                                 <td class="text-end text-nowrap">
@@ -794,15 +775,15 @@ else
     </div>
 }
 
-<!-- Modal: Bulk Turnstile Gate Block -->
+<!-- Modal: Turnstile Gate Access Control (Lock / Unlock) -->
 @if (isBulkBlacklistModalOpen)
 {
     <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content shadow-lg border-0">
-                <div class="modal-header bg-danger text-white">
+                <div class="modal-header bg-dark text-white">
                     <h5 class="modal-title fw-bold">
-                        <i class="bi bi-slash-circle me-2"></i> Bulk Gate Lock
+                        <i class="bi bi-shield-lock me-2"></i> Turnstile Access Control (Lock / Unlock)
                     </h5>
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseBulkBlacklistModal"></button>
                 </div>
@@ -825,29 +806,29 @@ else
                         </div>
                         <InputFile OnChange="HandleBulkBlacklistFileUpload" class="form-control form-control-sm" accept=".csv,.txt" />
                         <div class="form-text text-muted" style="font-size: 0.78rem;">
-                            Expected format: <code>EmpCode, DeviceSerialNumber</code> (or test with <code>sample_bulk_blacklist.csv</code>)
+                            Expected 3 columns: <code>EmpCode, DeviceSerialNumber, Action</code> (Action = <code>Block</code> or <code>Unblock</code>)
                         </div>
                     </div>
 
                     <div class="mb-3">
                         <label class="form-label fw-semibold small">Or Enter Manually</label>
-                        <textarea class="form-control font-monospace form-control-sm" rows="5" placeholder="ECL-7001, DEV-BIO-001&#10;ECL-7002, DEV-BIO-002&#10;ECL-7003, ALL" @bind="bulkEmpCodesInput"></textarea>
+                        <textarea class="form-control font-monospace form-control-sm" rows="6" placeholder="ECL-7001, DEV-BIO-001, Block&#10;ECL-7002, DEV-BIO-002, Unblock&#10;ECL-7003, ALL, Block&#10;ECL-7004, ALL, Unblock" @bind="bulkEmpCodesInput"></textarea>
                         <div class="form-text text-muted" style="font-size: 0.78rem;">
-                            Format: <code>EmpCode, SerialNumber</code> (use <code>ALL</code> or code alone to block all machines).
+                            Format: <code>EmpCode, SerialNumber, Action</code> (use <code>ALL</code> for all turnstiles; Action: <code>Block</code> or <code>Unblock</code>).
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer bg-light">
                     <button type="button" class="btn btn-secondary" @onclick="CloseBulkBlacklistModal" disabled="@isBulkProcessing">Cancel</button>
-                    <button type="button" class="btn btn-danger fw-semibold" @onclick="ExecuteBulkBlacklistAsync" disabled="@isBulkProcessing">
+                    <button type="button" class="btn btn-primary fw-semibold" @onclick="ExecuteBulkBlacklistAsync" disabled="@isBulkProcessing">
                         @if (isBulkProcessing)
                         {
                             <span class="spinner-border spinner-border-sm me-2"></span>
-                            <span>Locking Turnstiles...</span>
+                            <span>Applying Access Changes...</span>
                         }
                         else
                         {
-                            <span>Confirm Lock</span>
+                            <span><i class="bi bi-check2-circle me-1"></i> Apply Access Changes</span>
                         }
                     </button>
                 </div>
@@ -1564,13 +1545,14 @@ else
     private async Task DownloadSampleBlacklistCsvAsync()
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("EmpCode,DeviceSerialNumber");
-        sb.AppendLine("ECL-7001,DEV-BIO-001");
-        sb.AppendLine("ECL-7002,DEV-BIO-002");
-        sb.AppendLine("ECL-7003,ALL");
+        sb.AppendLine("EmpCode,DeviceSerialNumber,Action");
+        sb.AppendLine("ECL-7001,DEV-BIO-001,Block");
+        sb.AppendLine("ECL-7002,DEV-BIO-002,Unblock");
+        sb.AppendLine("ECL-7003,ALL,Block");
+        sb.AppendLine("ECL-7004,ALL,Unblock");
 
         string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
-        string fileName = "ECL_Bulk_Gate_Access_Template.csv";
+        string fileName = "ECL_Bulk_Turnstile_Access_Template.csv";
 
         await JS.InvokeVoidAsync("eval", $@"
             var link = document.createElement('a');
@@ -1608,6 +1590,7 @@ else
 
             int codeColIndex = 0;
             int serialColIndex = -1;
+            int actionColIndex = -1;
             int startIndex = 0;
 
             // Check if first line contains header columns
@@ -1626,46 +1609,53 @@ else
                     {
                         serialColIndex = i;
                     }
+                    else if (headerCols[i].Contains("action") || headerCols[i].Contains("block") || headerCols[i].Contains("status") || headerCols[i].Contains("type"))
+                    {
+                        actionColIndex = i;
+                    }
                 }
             }
 
-            var extractedPairs = new List<string>();
+            var extractedTriplets = new List<string>();
             for (int i = startIndex; i < rawLines.Count; i++)
             {
                 var cols = rawLines[i].Split(new[] { ',', '\t', ';' }).Select(c => c.Trim().Trim('"', '\'')).ToList();
                 string code = cols.Count > codeColIndex ? cols[codeColIndex] : "";
-                string serial = "";
-                if (serialColIndex >= 0 && cols.Count > serialColIndex)
+                string serial = "ALL";
+                if (serialColIndex >= 0 && cols.Count > serialColIndex && !string.IsNullOrWhiteSpace(cols[serialColIndex]))
                 {
                     serial = cols[serialColIndex];
                 }
-                else if (cols.Count > 1 && codeColIndex == 0)
+                else if (cols.Count > 1 && codeColIndex == 0 && actionColIndex != 1)
                 {
                     serial = cols[1];
                 }
 
+                string action = "Block";
+                if (actionColIndex >= 0 && cols.Count > actionColIndex && !string.IsNullOrWhiteSpace(cols[actionColIndex]))
+                {
+                    action = cols[actionColIndex];
+                }
+                else if (cols.Count > 2)
+                {
+                    action = cols[2];
+                }
+
                 if (!string.IsNullOrWhiteSpace(code))
                 {
-                    if (!string.IsNullOrWhiteSpace(serial))
-                    {
-                        extractedPairs.Add($"{code}, {serial}");
-                    }
-                    else
-                    {
-                        extractedPairs.Add($"{code}, ALL");
-                    }
+                    extractedTriplets.Add($"{code}, {serial}, {action}");
                 }
             }
 
-            var finalPairs = extractedPairs.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (!finalPairs.Any())
+            var finalTriplets = extractedTriplets.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (!finalTriplets.Any())
             {
                 bulkModalError = "No valid records found in the uploaded file.";
                 return;
             }
 
-            bulkEmpCodesInput = string.Join("\n", finalPairs);
-            bulkModalSuccess = $"Successfully loaded {finalPairs.Count} record(s) from {file.Name}.";
+            bulkEmpCodesInput = string.Join("\n", finalTriplets);
+            bulkModalSuccess = $"Successfully loaded {finalTriplets.Count} record(s) from {file.Name}.";
         }
         catch (Exception ex)
         {
@@ -1691,20 +1681,42 @@ else
                 .Select(p => p.Trim())
                 .ToList();
 
-            if (parts.Count >= 2)
+            if (parts.Count >= 3)
             {
-                entries.Add(new BulkBlockEntryDto(parts[0], parts[1]));
+                entries.Add(new BulkBlockEntryDto(parts[0], parts[1], parts[2]));
+            }
+            else if (parts.Count == 2)
+            {
+                if (parts[1].Equals("Block", StringComparison.OrdinalIgnoreCase) || parts[1].Equals("Unblock", StringComparison.OrdinalIgnoreCase))
+                {
+                    entries.Add(new BulkBlockEntryDto(parts[0], "ALL", parts[1]));
+                }
+                else
+                {
+                    entries.Add(new BulkBlockEntryDto(parts[0], parts[1], "Block"));
+                }
             }
             else if (parts.Count == 1)
             {
                 var spaceParts = parts[0].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (spaceParts.Length >= 2)
+                if (spaceParts.Length >= 3)
                 {
-                    entries.Add(new BulkBlockEntryDto(spaceParts[0], spaceParts[1]));
+                    entries.Add(new BulkBlockEntryDto(spaceParts[0], spaceParts[1], spaceParts[2]));
+                }
+                else if (spaceParts.Length == 2)
+                {
+                    if (spaceParts[1].Equals("Block", StringComparison.OrdinalIgnoreCase) || spaceParts[1].Equals("Unblock", StringComparison.OrdinalIgnoreCase))
+                    {
+                        entries.Add(new BulkBlockEntryDto(spaceParts[0], "ALL", spaceParts[1]));
+                    }
+                    else
+                    {
+                        entries.Add(new BulkBlockEntryDto(spaceParts[0], spaceParts[1], "Block"));
+                    }
                 }
                 else
                 {
-                    entries.Add(new BulkBlockEntryDto(parts[0], "ALL"));
+                    entries.Add(new BulkBlockEntryDto(parts[0], "ALL", "Block"));
                 }
             }
         }

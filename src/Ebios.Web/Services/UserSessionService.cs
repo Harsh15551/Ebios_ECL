@@ -25,19 +25,33 @@ public class UserSessionService
     public bool CanManageEmployees => IsSuperAdmin || (CurrentUser?.CanManageEmployees ?? false);
     public bool CanManageShifts => IsSuperAdmin || (CurrentUser?.CanManageShifts ?? false);
 
+    // Indian Standard Time (IST: UTC + 05:30)
+    public static DateTime GetIstToday()
+    {
+        try
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
+            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone).Date;
+        }
+        catch
+        {
+            return DateTime.UtcNow.AddHours(5).AddMinutes(30).Date;
+        }
+    }
+
     // Persist Attendance Date Range across navigations and tabs
-    private static DateTime _persistedFromDate = DateTime.Today.AddDays(-7);
-    private static DateTime _persistedToDate = DateTime.Today;
+    private static DateTime? _persistedFromDate;
+    private static DateTime? _persistedToDate;
 
     public DateTime AttendanceFromDate
     {
-        get => _persistedFromDate;
+        get => _persistedFromDate ?? GetIstToday().AddDays(-7);
         set => _persistedFromDate = value;
     }
 
     public DateTime AttendanceToDate
     {
-        get => _persistedToDate;
+        get => _persistedToDate ?? GetIstToday();
         set => _persistedToDate = value;
     }
 

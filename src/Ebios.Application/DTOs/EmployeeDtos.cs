@@ -31,7 +31,8 @@ public record WorkerDeviceAccessDto(
 
 public record BulkBlockEntryDto(
     string EmpCode,
-    string? DeviceSerialNumber = null
+    string? DeviceSerialNumber = null,
+    string Action = "Block" // "Block" or "Unblock"
 );
 
 public record BulkEmployeeEntryDto(
