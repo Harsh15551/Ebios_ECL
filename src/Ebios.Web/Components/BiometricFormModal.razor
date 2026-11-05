@@ -33,7 +33,7 @@
                                 <span class="fs-5">🚩</span>
                                 <div>
                                     <strong>Worker Not Yet Onboarded:</strong> No active employee master record exists for Employee ID <code>@Model.EmpCode</code>.
-                                    <div class="small text-muted">Saving this biometric form will automatically onboard this worker (EmpID: @Model.EmpCode, Name: @Model.EmployeeName). Location can be assigned now or later.</div>
+                                    <div class="small text-muted">Saving this biometric form will automatically onboard this worker (EmpID: @Model.EmpCode, Name: @Model.EmployeeName) once a valid Colliery Unit is specified in Department / Unit.</div>
                                 </div>
                             </div>
                             <button type="button" class="btn btn-sm btn-primary fw-semibold text-nowrap" @onclick="SaveFormAsync" disabled="@isSaving">

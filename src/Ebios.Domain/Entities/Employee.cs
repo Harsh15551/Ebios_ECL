@@ -7,8 +7,8 @@ public class Employee
     public string FullName { get; set; } = string.Empty;
     public string Designation { get; set; } = "Colliery Worker";
 
-    // Linked to a SubArea / Colliery Unit (Primary Location - nullable if unassigned)
-    public int? SubAreaId { get; set; }
+    // Linked to a SubArea / Colliery Unit (Primary Location - Strictly Compulsory)
+    public int SubAreaId { get; set; }
     public SubArea? SubArea { get; set; }
 
     // Additional Locations / Colliery Units (comma-separated SubArea IDs, e.g. "2,3")

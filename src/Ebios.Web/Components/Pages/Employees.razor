@@ -140,10 +140,6 @@
             <div class="col-12 col-md-3">
                 <select class="form-select" @bind="subAreaFilter">
                     <option value="0">All Permitted Units (@PermittedSubAreas.Count() Units)</option>
-                    @if (employees.Any(e => !e.SubAreaId.HasValue || e.SubAreaId.Value == 0))
-                    {
-                        <option value="-1">⚠️ Unassigned Location (@employees.Count(e => !e.SubAreaId.HasValue || e.SubAreaId.Value == 0) Workers)</option>
-                    }
                     @foreach (var sub in PermittedSubAreas)
                     {
                         <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
@@ -218,7 +214,7 @@ else
                                     <span class="badge bg-light text-dark border">@emp.Designation</span>
                                 </td>
                                 <td>
-                                    @if (emp.SubAreaId.HasValue && emp.SubAreaId.Value > 0)
+                                    @if (emp.SubAreaId > 0)
                                     {
                                         <div class="fw-semibold text-dark">@emp.SubAreaName</div>
                                         @if (emp.AdditionalSubAreaNames.Any())
@@ -628,6 +624,10 @@ else
                             Assigned Colliery Unit / Location <span class="text-danger">*</span>
                         </label>
                         <select class="form-select" @bind="editSubAreaId">
+                            @if (editSubAreaId == 0)
+                            {
+                                <option value="0">-- Select Permitted Colliery Unit --</option>
+                            }
                             @foreach (var sub in PermittedSubAreas)
                             {
                                 <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
@@ -1316,11 +1316,7 @@ else
                     e.SubAreaName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
             }
 
-            if (subAreaFilter == -1)
-            {
-                query = query.Where(e => !e.SubAreaId.HasValue || e.SubAreaId.Value == 0);
-            }
-            else if (subAreaFilter > 0)
+            if (subAreaFilter > 0)
             {
                 query = query.Where(e => e.SubAreaId == subAreaFilter);
             }
@@ -1404,7 +1400,7 @@ else
 
         editDesignationSelection = !string.IsNullOrWhiteSpace(emp.Designation) ? emp.Designation : (availableDesignations.FirstOrDefault() ?? "Colliery Worker");
 
-        editSubAreaId = emp.SubAreaId ?? 0;
+        editSubAreaId = emp.SubAreaId;
         editAdditionalSubAreaIds = emp.AdditionalSubAreaIds.ToList();
         editSelectedAdditionalSubAreaId = 0;
         showInlineEditAdd = false;
@@ -1477,7 +1473,7 @@ else
 
         if (editSubAreaId <= 0)
         {
-            modalError = "Please select a Colliery Unit.";
+            editModalError = "Please select a Colliery Unit to assign to this worker.";
             return;
         }
 

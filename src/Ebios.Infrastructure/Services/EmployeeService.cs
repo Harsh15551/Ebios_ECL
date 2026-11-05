@@ -30,27 +30,21 @@ public class EmployeeService : IEmployeeService
                   .ToList();
     }
 
-    private async Task<string> BuildLocationCodesAsync(int? primarySubAreaId, string? additionalIdsCsv)
+    private async Task<string> BuildLocationCodesAsync(int primarySubAreaId, string? additionalIdsCsv)
     {
-        var allIds = new HashSet<int>();
-        if (primarySubAreaId.HasValue && primarySubAreaId.Value > 0)
-        {
-            allIds.Add(primarySubAreaId.Value);
-        }
+        var allIds = new HashSet<int> { primarySubAreaId };
         foreach (var id in ParseAdditionalIds(additionalIdsCsv))
         {
             allIds.Add(id);
         }
-
-        if (!allIds.Any()) return string.Empty;
 
         var subAreas = await _context.SubAreas
             .AsNoTracking()
             .Where(s => allIds.Contains(s.Id))
             .ToListAsync();
 
-        var primary = primarySubAreaId.HasValue ? subAreas.FirstOrDefault(s => s.Id == primarySubAreaId.Value) : null;
-        var others = subAreas.Where(s => !primarySubAreaId.HasValue || s.Id != primarySubAreaId.Value).ToList();
+        var primary = subAreas.FirstOrDefault(s => s.Id == primarySubAreaId);
+        var others = subAreas.Where(s => s.Id != primarySubAreaId).ToList();
 
         var codes = new List<string>();
         if (primary != null) codes.Add(primary.SubAreaCode);
@@ -153,13 +147,18 @@ public class EmployeeService : IEmployeeService
     public async Task<EmployeeDto> CreateEmployeeAsync(CreateEmployeeDto dto)
     {
         string normalizedCode = dto.EmpCode.Trim().ToUpperInvariant();
-        SubArea? subArea = null;
-        if (dto.SubAreaId.HasValue && dto.SubAreaId.Value > 0)
+        if (dto.SubAreaId <= 0)
         {
-            subArea = await _context.SubAreas.Include(s => s.Area).FirstOrDefaultAsync(s => s.Id == dto.SubAreaId.Value);
+            throw new InvalidOperationException("Assigned Colliery Unit is compulsory. Please select a valid Colliery Unit.");
         }
 
-        var additionalIds = dto.AdditionalSubAreaIds?.Where(id => !dto.SubAreaId.HasValue || id != dto.SubAreaId.Value).Distinct().ToList() ?? new List<int>();
+        var subArea = await _context.SubAreas.Include(s => s.Area).FirstOrDefaultAsync(s => s.Id == dto.SubAreaId);
+        if (subArea == null)
+        {
+            throw new InvalidOperationException($"Colliery Sub-Area with ID {dto.SubAreaId} was not found.");
+        }
+
+        var additionalIds = dto.AdditionalSubAreaIds?.Where(id => id != dto.SubAreaId).Distinct().ToList() ?? new List<int>();
         string? additionalCsv = additionalIds.Any() ? string.Join(",", additionalIds) : null;
 
         var existingEmp = await _context.Employees.Include(e => e.SubArea).ThenInclude(s => s!.Area).FirstOrDefaultAsync(e => e.EmpCode == normalizedCode);
@@ -170,7 +169,7 @@ public class EmployeeService : IEmployeeService
             // Employee already exists: update details seamlessly (upsert)
             existingEmp.FullName = dto.FullName.Trim();
             if (!string.IsNullOrWhiteSpace(dto.Designation)) existingEmp.Designation = dto.Designation.Trim();
-            if (dto.SubAreaId.HasValue && dto.SubAreaId.Value > 0) existingEmp.SubAreaId = dto.SubAreaId.Value;
+            existingEmp.SubAreaId = dto.SubAreaId;
             existingEmp.AdditionalSubAreaIds = additionalCsv;
             existingEmp.IsHigherAuthority = dto.IsHigherAuthority;
             existingEmp.IsActive = true;
@@ -183,7 +182,7 @@ public class EmployeeService : IEmployeeService
                 EmpCode = normalizedCode,
                 FullName = dto.FullName.Trim(),
                 Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "Colliery Worker" : dto.Designation.Trim(),
-                SubAreaId = (dto.SubAreaId.HasValue && dto.SubAreaId.Value > 0) ? dto.SubAreaId.Value : (int?)null,
+                SubAreaId = dto.SubAreaId,
                 AdditionalSubAreaIds = additionalCsv,
                 IsHigherAuthority = dto.IsHigherAuthority,
                 IsActive = true,
@@ -238,34 +237,36 @@ public class EmployeeService : IEmployeeService
         // Build comma-separated location codes (single or multiple) as per eBios contract
         string locationCodes = await BuildLocationCodesAsync(employee.SubAreaId, employee.AdditionalSubAreaIds);
 
-        // Background auto-sync to eBios SOAP Server
-        try
+        if (!string.IsNullOrWhiteSpace(locationCodes))
         {
-            var (success, msg) = await _ebiosSoapService.UpdateEmployeeAsync(
-                employee.EmpCode,
-                employee.FullName,
-                locationCodes,
-                "Employee",
-                "None"
-            );
+            // Background auto-sync to eBios SOAP Server (only when location is assigned)
+            try
+            {
+                var (success, msg) = await _ebiosSoapService.UpdateEmployeeAsync(
+                    employee.EmpCode,
+                    employee.FullName,
+                    locationCodes,
+                    "Employee",
+                    "None"
+                );
 
-            if (success)
-            {
-                employee.IsSyncedToEbios = true;
-                employee.LastSyncedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-                _logger.LogInformation("Successfully synced Employee {Code} to eBios locations: {Locations}", employee.EmpCode, locationCodes);
+                if (success)
+                {
+                    employee.IsSyncedToEbios = true;
+                    employee.LastSyncedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                    _logger.LogInformation("Successfully synced Employee {Code} to eBios locations: {Locations}", employee.EmpCode, locationCodes);
+                }
+                else
+                {
+                    _logger.LogWarning("eBios UpdateEmployee returned non-success for {Code}: {Msg}", employee.EmpCode, msg);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                _logger.LogWarning("eBios UpdateEmployee returned non-success for {Code}: {Msg}", employee.EmpCode, msg);
+                _logger.LogError(ex, "Failed to auto-sync Employee {Code} to eBios server.", employee.EmpCode);
             }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to auto-sync Employee {Code} to eBios server.", employee.EmpCode);
-        }
-
         var subAreaLookup = await _context.SubAreas.AsNoTracking().ToDictionaryAsync(s => s.Id, s => s.SubAreaName);
         var addNames = additionalIds.Where(id => subAreaLookup.ContainsKey(id)).Select(id => subAreaLookup[id]).ToList();
 
@@ -275,8 +276,8 @@ public class EmployeeService : IEmployeeService
             employee.FullName,
             employee.Designation,
             employee.SubAreaId,
-            subArea != null ? subArea.SubAreaName : "Unassigned (No Location Added)",
-            subArea != null && subArea.Area != null ? subArea.Area.AreaName : "—",
+            subArea.SubAreaName,
+            subArea.Area != null ? subArea.Area.AreaName : string.Empty,
             additionalIds,
             addNames,
             employee.IsActive,
@@ -301,38 +302,39 @@ public class EmployeeService : IEmployeeService
             return (false, "Employee not found.");
         }
 
-        SubArea? newSubArea = null;
-        if (dto.SubAreaId.HasValue && dto.SubAreaId.Value > 0)
+        if (dto.SubAreaId <= 0)
         {
-            newSubArea = await _context.SubAreas
-                .Include(s => s.Area)
-                .FirstOrDefaultAsync(s => s.Id == dto.SubAreaId.Value);
+            return (false, "Colliery Unit is required. Please select a valid Colliery Unit.");
+        }
 
-            if (newSubArea == null)
+        var newSubArea = await _context.SubAreas
+            .Include(s => s.Area)
+            .FirstOrDefaultAsync(s => s.Id == dto.SubAreaId);
+
+        if (newSubArea == null)
+        {
+            return (false, "Target Colliery Unit was not found.");
+        }
+
+        // Permission check for Area Personnel Managers (APMs)
+        if (requestingUserAreaId.HasValue)
+        {
+            if (employee.SubArea != null && employee.SubArea.AreaId != requestingUserAreaId.Value)
             {
-                return (false, "Target Colliery Unit was not found.");
+                return (false, "Permission denied: You do not have permission to modify workers outside your assigned Mining Area.");
             }
 
-            // Permission check for Area Personnel Managers (APMs)
-            if (requestingUserAreaId.HasValue)
+            if (newSubArea.AreaId != requestingUserAreaId.Value)
             {
-                if (employee.SubArea != null && employee.SubArea.AreaId != requestingUserAreaId.Value)
-                {
-                    return (false, "Permission denied: You do not have permission to modify workers outside your assigned Mining Area.");
-                }
-
-                if (newSubArea.AreaId != requestingUserAreaId.Value)
-                {
-                    return (false, "Permission denied: As an Area Personnel Manager, you can only assign units within your assigned Mining Area.");
-                }
+                return (false, "Permission denied: As an Area Personnel Manager, you can only assign units within your assigned Mining Area.");
             }
         }
 
-        var additionalIds = dto.AdditionalSubAreaIds?.Where(subId => !dto.SubAreaId.HasValue || subId != dto.SubAreaId.Value).Distinct().ToList() ?? new List<int>();
+        var additionalIds = dto.AdditionalSubAreaIds?.Where(subId => subId != dto.SubAreaId).Distinct().ToList() ?? new List<int>();
 
         employee.FullName = dto.FullName.Trim();
         employee.Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "Colliery Worker" : dto.Designation.Trim();
-        employee.SubAreaId = (dto.SubAreaId.HasValue && dto.SubAreaId.Value > 0) ? dto.SubAreaId.Value : (int?)null;
+        employee.SubAreaId = dto.SubAreaId;
         employee.IsHigherAuthority = dto.IsHigherAuthority;
         employee.AdditionalSubAreaIds = additionalIds.Any() ? string.Join(",", additionalIds) : null;
 
@@ -379,9 +381,9 @@ public class EmployeeService : IEmployeeService
         if (employee == null) return new List<WorkerDeviceAccessDto>();
 
         var targetSubAreaIds = new List<int>();
-        if (employee.SubAreaId.HasValue && employee.SubAreaId.Value > 0)
+        if (employee.SubAreaId > 0)
         {
-            targetSubAreaIds.Add(employee.SubAreaId.Value);
+            targetSubAreaIds.Add(employee.SubAreaId);
         }
         if (!string.IsNullOrWhiteSpace(employee.AdditionalSubAreaIds))
         {
@@ -603,9 +605,9 @@ public class EmployeeService : IEmployeeService
         var allSubAreaIds = new HashSet<int>();
         foreach (var emp in matchingEmployees)
         {
-            if (emp.SubAreaId.HasValue && emp.SubAreaId.Value > 0)
+            if (emp.SubAreaId > 0)
             {
-                allSubAreaIds.Add(emp.SubAreaId.Value);
+                allSubAreaIds.Add(emp.SubAreaId);
             }
             if (!string.IsNullOrWhiteSpace(emp.AdditionalSubAreaIds))
             {
@@ -636,9 +638,9 @@ public class EmployeeService : IEmployeeService
             string empCodeUpper = emp.EmpCode.ToUpperInvariant();
 
             var empSubAreaIds = new List<int>();
-            if (emp.SubAreaId.HasValue && emp.SubAreaId.Value > 0)
+            if (emp.SubAreaId > 0)
             {
-                empSubAreaIds.Add(emp.SubAreaId.Value);
+                empSubAreaIds.Add(emp.SubAreaId);
             }
             if (!string.IsNullOrWhiteSpace(emp.AdditionalSubAreaIds))
             {
@@ -920,7 +922,8 @@ public class EmployeeService : IEmployeeService
         int successCount = 0;
         var errors = new List<string>();
 
-        var subAreas = await _context.SubAreas.AsNoTracking().ToListAsync();
+        var subAreas = await _context.SubAreas.Include(s => s.Area).AsNoTracking().ToListAsync();
+        var areas = await _context.Areas.AsNoTracking().ToListAsync();
         var existingEmployees = await _context.Employees.Select(e => e.EmpCode.ToUpper()).ToListAsync();
         var existingCodes = new HashSet<string>(existingEmployees);
 
@@ -944,20 +947,36 @@ public class EmployeeService : IEmployeeService
                     }
                     else
                     {
-                        var match = subAreas.FirstOrDefault(s => s.SubAreaName.Equals(target, StringComparison.OrdinalIgnoreCase) ||
-                                                                s.SubAreaCode.Equals(target, StringComparison.OrdinalIgnoreCase));
-                        if (match != null) resolvedSubAreaId = match.Id;
-                    }
-
-                    if (resolvedSubAreaId == 0)
-                    {
-                        errors.Add($"Worker {entry.EmpCode}: Location '{entry.CollieryNameOrId}' does not exist in ECL Sub-Areas.");
+                        var match = subAreas.FirstOrDefault(s => s.SubAreaName.Trim().Equals(target, StringComparison.OrdinalIgnoreCase) ||
+                                                                s.SubAreaCode.Trim().Equals(target, StringComparison.OrdinalIgnoreCase));
+                        if (match != null)
+                        {
+                            resolvedSubAreaId = match.Id;
+                        }
+                        else
+                        {
+                            var areaMatch = areas.FirstOrDefault(a => a.AreaName.Trim().Equals(target, StringComparison.OrdinalIgnoreCase) ||
+                                                                      a.AreaCode.Trim().Equals(target, StringComparison.OrdinalIgnoreCase));
+                            if (areaMatch != null)
+                            {
+                                var firstSub = subAreas.FirstOrDefault(s => s.AreaId == areaMatch.Id);
+                                if (firstSub != null) resolvedSubAreaId = firstSub.Id;
+                            }
+                        }
                     }
                 }
 
-                int? assignedSubAreaId = (resolvedSubAreaId > 0) 
-                    ? resolvedSubAreaId 
-                    : (defaultSubAreaId.HasValue && defaultSubAreaId.Value > 0 ? defaultSubAreaId.Value : (int?)null);
+                if (resolvedSubAreaId == 0 && defaultSubAreaId.HasValue && defaultSubAreaId.Value > 0)
+                {
+                    resolvedSubAreaId = defaultSubAreaId.Value;
+                }
+
+                if (resolvedSubAreaId == 0)
+                {
+                    string locDesc = string.IsNullOrWhiteSpace(entry.CollieryNameOrId) ? "MISSING" : entry.CollieryNameOrId.Trim();
+                    errors.Add($"Worker {entry.EmpCode}: Colliery location '{locDesc}' is missing or does not match any ECL Colliery Unit (case-insensitive check). Worker NOT onboarded.");
+                    continue;
+                }
 
                 if (existingCodes.Contains(code))
                 {
@@ -967,7 +986,7 @@ public class EmployeeService : IEmployeeService
                         if (!string.IsNullOrWhiteSpace(entry.FullName)) emp.FullName = entry.FullName.Trim();
                         if (!string.IsNullOrWhiteSpace(entry.Designation)) emp.Designation = entry.Designation.Trim();
                         if (entry.IsHigherAuthority) emp.IsHigherAuthority = true;
-                        if (assignedSubAreaId.HasValue) emp.SubAreaId = assignedSubAreaId.Value;
+                        emp.SubAreaId = resolvedSubAreaId;
                         successCount++;
                     }
                     continue;
@@ -978,7 +997,7 @@ public class EmployeeService : IEmployeeService
                     EmpCode = code,
                     FullName = !string.IsNullOrWhiteSpace(entry.FullName) ? entry.FullName.Trim() : code,
                     Designation = !string.IsNullOrWhiteSpace(entry.Designation) ? entry.Designation.Trim() : "Colliery Worker",
-                    SubAreaId = assignedSubAreaId,
+                    SubAreaId = resolvedSubAreaId,
                     IsHigherAuthority = entry.IsHigherAuthority,
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
@@ -1032,6 +1051,35 @@ public class EmployeeService : IEmployeeService
                         s.IsVerified = true;
                         s.IsFlagged = false;
                         s.IsHigherAuthority = employee.IsHigherAuthority;
+                    }
+                }
+
+                // Dispatch SOAP update with location code for each onboarded/updated worker
+                foreach (var emp in emps)
+                {
+                    try
+                    {
+                        string locationCodes = await BuildLocationCodesAsync(emp.SubAreaId, emp.AdditionalSubAreaIds);
+                        if (!string.IsNullOrWhiteSpace(locationCodes))
+                        {
+                            var (soapSuccess, _) = await _ebiosSoapService.UpdateEmployeeAsync(
+                                emp.EmpCode,
+                                emp.FullName,
+                                locationCodes,
+                                "Employee",
+                                "None"
+                            );
+
+                            if (soapSuccess)
+                            {
+                                emp.IsSyncedToEbios = true;
+                                emp.LastSyncedAt = DateTime.UtcNow;
+                            }
+                        }
+                    }
+                    catch (Exception soapEx)
+                    {
+                        _logger.LogWarning("SOAP sync warning in bulk onboarding for {Code}: {Msg}", emp.EmpCode, soapEx.Message);
                     }
                 }
 

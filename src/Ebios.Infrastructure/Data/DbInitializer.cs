@@ -52,7 +52,8 @@ public static class DbInitializer
                 ALTER TABLE ""Employees"" ADD COLUMN IF NOT EXISTS ""StatusReason"" character varying(100);
                 ALTER TABLE ""Employees"" ADD COLUMN IF NOT EXISTS ""BlockedDeviceSerials"" text;
                 ALTER TABLE ""Employees"" ADD COLUMN IF NOT EXISTS ""IsHigherAuthority"" boolean NOT NULL DEFAULT false;
-                ALTER TABLE ""Employees"" ALTER COLUMN ""SubAreaId"" DROP NOT NULL;
+                UPDATE ""Employees"" SET ""SubAreaId"" = 1 WHERE ""SubAreaId"" IS NULL;
+                ALTER TABLE ""Employees"" ALTER COLUMN ""SubAreaId"" SET NOT NULL;
                 ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""CanManageEmployees"" boolean NOT NULL DEFAULT true;
                 ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""CanManageShifts"" boolean NOT NULL DEFAULT true;
 

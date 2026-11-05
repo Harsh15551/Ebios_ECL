@@ -12,14 +12,17 @@ namespace Ebios.Infrastructure.Services;
 public class BiometricFormService : IBiometricFormService
 {
     private readonly AppDbContext _context;
+    private readonly IEbiosSoapService _ebiosSoapService;
     private readonly ILogger<BiometricFormService> _logger;
     private readonly string _storageBasePath;
 
     public BiometricFormService(
         AppDbContext context,
+        IEbiosSoapService ebiosSoapService,
         ILogger<BiometricFormService> logger)
     {
         _context = context;
+        _ebiosSoapService = ebiosSoapService;
         _logger = logger;
 
         // Base directory: storage/biometric_forms under application root
@@ -107,47 +110,31 @@ public class BiometricFormService : IBiometricFormService
                            dto.Category.Contains("Executive", StringComparison.OrdinalIgnoreCase) && 
                            !dto.Category.Contains("Non", StringComparison.OrdinalIgnoreCase);
 
-        // Location matching against ECL SubAreas
-        SubArea? matchedSubArea = null;
+        // Location matching against ECL SubAreas (case-insensitive)
+        var allSubAreas = await _context.SubAreas.Include(s => s.Area).AsNoTracking().ToListAsync();
+        var allAreas = await _context.Areas.AsNoTracking().ToListAsync();
+
         string locCandidate = dto.DepartmentUnit?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(locCandidate)) locCandidate = dto.PlaceOfPosting?.Trim() ?? "";
 
-        if (!string.IsNullOrWhiteSpace(locCandidate))
-        {
-            if (int.TryParse(locCandidate, out int sid))
-            {
-                matchedSubArea = await _context.SubAreas.FirstOrDefaultAsync(s => s.Id == sid);
-            }
-            if (matchedSubArea == null)
-            {
-                matchedSubArea = await _context.SubAreas.FirstOrDefaultAsync(s =>
-                    s.SubAreaName.ToLower() == locCandidate.ToLower() ||
-                    s.SubAreaCode.ToLower() == locCandidate.ToLower());
-            }
-            if (matchedSubArea == null)
-            {
-                var areaMatch = await _context.Areas.FirstOrDefaultAsync(a => a.AreaName.ToLower() == locCandidate.ToLower());
-                if (areaMatch != null)
-                {
-                    matchedSubArea = await _context.SubAreas.FirstOrDefaultAsync(s => s.AreaId == areaMatch.Id);
-                }
-            }
-        }
+        SubArea? matchedSubArea = MatchSubAreaCaseInsensitive(locCandidate, allSubAreas, allAreas);
 
         var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToLower() == cleanCode.ToLower());
         if (emp == null)
         {
-            // Onboard worker through biometric form
-            // EmpCode = cleanCode, FullName = dto.EmployeeName
-            // Position/Designation: DO NOT map form.PositionDesignation (default to "Colliery Worker")
-            // Category: Executive -> IsHigherAuthority
-            // Location: if matched, assign SubAreaId; otherwise null (add later manually or in bulk)
+            // Worker does not exist yet. Colliery location is strictly COMPULSORY to onboard.
+            if (matchedSubArea == null)
+            {
+                string locDesc = string.IsNullOrWhiteSpace(locCandidate) ? "MISSING" : locCandidate;
+                throw new InvalidOperationException($"Cannot onboard worker '{cleanCode}': Colliery location '{locDesc}' is missing or does not match any ECL Colliery Unit (case-insensitive check). Location is compulsory.");
+            }
+
             emp = new Employee
             {
                 EmpCode = cleanCode.ToUpperInvariant(),
                 FullName = !string.IsNullOrWhiteSpace(dto.EmployeeName) ? dto.EmployeeName.Trim() : cleanCode.ToUpperInvariant(),
                 Designation = "Colliery Worker",
-                SubAreaId = matchedSubArea?.Id,
+                SubAreaId = matchedSubArea.Id,
                 IsHigherAuthority = isExecutive,
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
@@ -182,10 +169,33 @@ public class BiometricFormService : IBiometricFormService
                     s.IsFlagged = false;
                     s.IsHigherAuthority = emp.IsHigherAuthority;
                 }
+                await _context.SaveChangesAsync();
             }
             catch (Exception retroEx)
             {
                 _logger.LogWarning("Retroactive linking warning on biometric save for {Code}: {Msg}", emp.EmpCode, retroEx.Message);
+            }
+
+            // Sync newly onboarded employee to eBios SOAP server
+            try
+            {
+                var (soapOk, _) = await _ebiosSoapService.UpdateEmployeeAsync(
+                    emp.EmpCode,
+                    emp.FullName,
+                    matchedSubArea.SubAreaCode,
+                    "Employee",
+                    "None"
+                );
+                if (soapOk)
+                {
+                    emp.IsSyncedToEbios = true;
+                    emp.LastSyncedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                }
+            }
+            catch (Exception soapEx)
+            {
+                _logger.LogWarning("SOAP sync warning on biometric save for {Code}: {Msg}", emp.EmpCode, soapEx.Message);
             }
         }
         else
@@ -194,7 +204,38 @@ public class BiometricFormService : IBiometricFormService
             entity.EmployeeId = emp.Id;
             if (!string.IsNullOrWhiteSpace(dto.EmployeeName)) emp.FullName = dto.EmployeeName.Trim();
             if (isExecutive) emp.IsHigherAuthority = true;
-            if (matchedSubArea != null) emp.SubAreaId = matchedSubArea.Id;
+
+            if (!string.IsNullOrWhiteSpace(locCandidate))
+            {
+                if (matchedSubArea == null)
+                {
+                    throw new InvalidOperationException($"Colliery location '{locCandidate}' does not match any ECL Colliery Unit (case-insensitive check).");
+                }
+
+                if (emp.SubAreaId != matchedSubArea.Id)
+                {
+                    emp.SubAreaId = matchedSubArea.Id;
+                    try
+                    {
+                        var (soapOk, _) = await _ebiosSoapService.UpdateEmployeeAsync(
+                            emp.EmpCode,
+                            emp.FullName,
+                            matchedSubArea.SubAreaCode,
+                            "Employee",
+                            "None"
+                        );
+                        if (soapOk)
+                        {
+                            emp.IsSyncedToEbios = true;
+                            emp.LastSyncedAt = DateTime.UtcNow;
+                        }
+                    }
+                    catch (Exception soapEx)
+                    {
+                        _logger.LogWarning("SOAP sync warning on biometric transfer for {Code}: {Msg}", emp.EmpCode, soapEx.Message);
+                    }
+                }
+            }
         }
 
         // Update Section 1
@@ -442,36 +483,18 @@ public class BiometricFormService : IBiometricFormService
                 form.UpdatedBy = updatedBy;
                 form.UpdatedAt = DateTime.UtcNow;
 
-                // Location validation against ECL SubAreas
-                SubArea? matchedSubArea = null;
+                // Location validation against ECL SubAreas (case-insensitive)
                 string locCandidate = form.DepartmentUnit?.Trim() ?? "";
                 if (string.IsNullOrWhiteSpace(locCandidate)) locCandidate = form.PlaceOfPosting?.Trim() ?? "";
 
-                if (!string.IsNullOrWhiteSpace(locCandidate))
-                {
-                    if (int.TryParse(locCandidate, out int sid))
-                    {
-                        matchedSubArea = allSubAreas.FirstOrDefault(s => s.Id == sid);
-                    }
-                    if (matchedSubArea == null)
-                    {
-                        matchedSubArea = allSubAreas.FirstOrDefault(s =>
-                            s.SubAreaName.Equals(locCandidate, StringComparison.OrdinalIgnoreCase) ||
-                            s.SubAreaCode.Equals(locCandidate, StringComparison.OrdinalIgnoreCase));
-                    }
-                    if (matchedSubArea == null)
-                    {
-                        var areaMatch = allAreas.FirstOrDefault(a => a.AreaName.Equals(locCandidate, StringComparison.OrdinalIgnoreCase));
-                        if (areaMatch != null)
-                        {
-                            matchedSubArea = allSubAreas.FirstOrDefault(s => s.AreaId == areaMatch.Id);
-                        }
-                    }
+                SubArea? matchedSubArea = MatchSubAreaCaseInsensitive(locCandidate, allSubAreas, allAreas);
 
-                    if (matchedSubArea == null)
-                    {
-                        result.Errors.Add($"Line {lineNum} ({empCode}): Location '{locCandidate}' was not recognized in ECL Sub-Areas (worker onboarded with Unassigned location).");
-                    }
+                if (matchedSubArea == null)
+                {
+                    result.FailureCount++;
+                    string locDesc = string.IsNullOrWhiteSpace(locCandidate) ? "MISSING" : locCandidate;
+                    result.Errors.Add($"Line {lineNum} ({empCode}): Location '{locDesc}' is missing or does not match any ECL Colliery Unit (case-insensitive check). Worker NOT onboarded.");
+                    continue;
                 }
 
                 // Check worker existence: update if exists, or auto-onboard if new
@@ -484,23 +507,41 @@ public class BiometricFormService : IBiometricFormService
                 {
                     // Existing worker: update details (do NOT overwrite Designation from form)
                     if (!string.IsNullOrWhiteSpace(form.EmployeeName)) emp.FullName = form.EmployeeName;
-                    if (matchedSubArea != null) emp.SubAreaId = matchedSubArea.Id;
+                    emp.SubAreaId = matchedSubArea.Id;
                     if (isExecutive) emp.IsHigherAuthority = true;
 
                     form.EmployeeId = emp.Id;
+
+                    // Sync to eBios SOAP server
+                    try
+                    {
+                        var (soapOk, _) = await _ebiosSoapService.UpdateEmployeeAsync(
+                            emp.EmpCode,
+                            emp.FullName,
+                            matchedSubArea.SubAreaCode,
+                            "Employee",
+                            "None"
+                        );
+                        if (soapOk)
+                        {
+                            emp.IsSyncedToEbios = true;
+                            emp.LastSyncedAt = DateTime.UtcNow;
+                        }
+                    }
+                    catch (Exception soapEx)
+                    {
+                        _logger.LogWarning("SOAP sync warning in bulk CSV for {Code}: {Msg}", emp.EmpCode, soapEx.Message);
+                    }
                 }
                 else
                 {
-                    // Direct onboard worker from bulk template
-                    // Designation defaults to "Colliery Worker" (not mapped from form)
-                    // Location: if matched, map it; otherwise leave null for later assignment
-                    int? assignedSubAreaId = matchedSubArea?.Id;
+                    // Direct onboard worker from bulk template with mandatory location
                     var newEmp = new Employee
                     {
                         EmpCode = empCode.ToUpperInvariant(),
                         FullName = !string.IsNullOrWhiteSpace(form.EmployeeName) ? form.EmployeeName : empCode.ToUpperInvariant(),
                         Designation = "Colliery Worker",
-                        SubAreaId = assignedSubAreaId,
+                        SubAreaId = matchedSubArea.Id,
                         IsHigherAuthority = isExecutive,
                         IsActive = true,
                         CreatedAt = DateTime.UtcNow
@@ -539,6 +580,27 @@ public class BiometricFormService : IBiometricFormService
                     catch (Exception retroEx)
                     {
                         _logger.LogWarning("Retroactive linking warning for worker {Code}: {Msg}", newEmp.EmpCode, retroEx.Message);
+                    }
+
+                    // Sync newly onboarded employee to eBios SOAP server
+                    try
+                    {
+                        var (soapOk, _) = await _ebiosSoapService.UpdateEmployeeAsync(
+                            newEmp.EmpCode,
+                            newEmp.FullName,
+                            matchedSubArea.SubAreaCode,
+                            "Employee",
+                            "None"
+                        );
+                        if (soapOk)
+                        {
+                            newEmp.IsSyncedToEbios = true;
+                            newEmp.LastSyncedAt = DateTime.UtcNow;
+                        }
+                    }
+                    catch (Exception soapEx)
+                    {
+                        _logger.LogWarning("SOAP sync warning in bulk CSV onboard for {Code}: {Msg}", newEmp.EmpCode, soapEx.Message);
                     }
                 }
 
@@ -755,6 +817,35 @@ public class BiometricFormService : IBiometricFormService
             UpdatedBy = f.UpdatedBy,
             UpdatedAt = f.UpdatedAt
         };
+    }
+
+    public static SubArea? MatchSubAreaCaseInsensitive(string? locationInput, IEnumerable<SubArea> allSubAreas, IEnumerable<Area> allAreas)
+    {
+        if (string.IsNullOrWhiteSpace(locationInput)) return null;
+        string target = locationInput.Trim();
+
+        if (int.TryParse(target, out int sid))
+        {
+            var byId = allSubAreas.FirstOrDefault(s => s.Id == sid);
+            if (byId != null) return byId;
+        }
+
+        var bySubName = allSubAreas.FirstOrDefault(s => s.SubAreaName.Trim().Equals(target, StringComparison.OrdinalIgnoreCase));
+        if (bySubName != null) return bySubName;
+
+        var bySubCode = allSubAreas.FirstOrDefault(s => s.SubAreaCode.Trim().Equals(target, StringComparison.OrdinalIgnoreCase));
+        if (bySubCode != null) return bySubCode;
+
+        var areaMatch = allAreas.FirstOrDefault(a => 
+            a.AreaName.Trim().Equals(target, StringComparison.OrdinalIgnoreCase) ||
+            a.AreaCode.Trim().Equals(target, StringComparison.OrdinalIgnoreCase));
+        if (areaMatch != null)
+        {
+            var firstSub = allSubAreas.FirstOrDefault(s => s.AreaId == areaMatch.Id);
+            if (firstSub != null) return firstSub;
+        }
+
+        return null;
     }
 
     private static string SanitizeEmpCode(string empCode)
