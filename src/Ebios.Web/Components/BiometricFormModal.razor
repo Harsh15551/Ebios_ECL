@@ -26,6 +26,22 @@
                 <!-- Modal Body: Printable Official Template -->
                 <div class="modal-body p-4 bg-white" id="printableBiometricForm">
                     <!-- Alerts (Hidden during print) -->
+                    @if (!Model.EmployeeId.HasValue)
+                    {
+                        <div class="alert alert-warning py-2 px-3 d-flex justify-content-between align-items-center mb-3 no-print">
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="fs-5">🚩</span>
+                                <div>
+                                    <strong>Worker Not Yet Onboarded:</strong> No active employee master record exists for Employee ID <code>@Model.EmpCode</code>.
+                                    <div class="small text-muted">Saving this biometric form will automatically onboard this worker (EmpID: @Model.EmpCode, Name: @Model.EmployeeName). Location can be assigned now or later.</div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-primary fw-semibold text-nowrap" @onclick="SaveFormAsync" disabled="@isSaving">
+                                <i class="bi bi-person-plus me-1"></i> Onboard Worker Now
+                            </button>
+                        </div>
+                    }
+
                     @if (!string.IsNullOrEmpty(statusMessage))
                     {
                         <div class="alert alert-success alert-dismissible fade show no-print py-2 mb-3" role="alert">

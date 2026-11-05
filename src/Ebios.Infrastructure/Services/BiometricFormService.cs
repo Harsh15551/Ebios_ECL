@@ -102,11 +102,99 @@ public class BiometricFormService : IBiometricFormService
             _context.EmployeeBiometricForms.Add(entity);
         }
 
-        // Link employee if null
-        if (!entity.EmployeeId.HasValue)
+        // Link or auto-onboard employee through biometric form
+        bool isExecutive = !string.IsNullOrWhiteSpace(dto.Category) && 
+                           dto.Category.Contains("Executive", StringComparison.OrdinalIgnoreCase) && 
+                           !dto.Category.Contains("Non", StringComparison.OrdinalIgnoreCase);
+
+        // Location matching against ECL SubAreas
+        SubArea? matchedSubArea = null;
+        string locCandidate = dto.DepartmentUnit?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(locCandidate)) locCandidate = dto.PlaceOfPosting?.Trim() ?? "";
+
+        if (!string.IsNullOrWhiteSpace(locCandidate))
         {
-            var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToLower() == cleanCode.ToLower());
-            if (emp != null) entity.EmployeeId = emp.Id;
+            if (int.TryParse(locCandidate, out int sid))
+            {
+                matchedSubArea = await _context.SubAreas.FirstOrDefaultAsync(s => s.Id == sid);
+            }
+            if (matchedSubArea == null)
+            {
+                matchedSubArea = await _context.SubAreas.FirstOrDefaultAsync(s =>
+                    s.SubAreaName.ToLower() == locCandidate.ToLower() ||
+                    s.SubAreaCode.ToLower() == locCandidate.ToLower());
+            }
+            if (matchedSubArea == null)
+            {
+                var areaMatch = await _context.Areas.FirstOrDefaultAsync(a => a.AreaName.ToLower() == locCandidate.ToLower());
+                if (areaMatch != null)
+                {
+                    matchedSubArea = await _context.SubAreas.FirstOrDefaultAsync(s => s.AreaId == areaMatch.Id);
+                }
+            }
+        }
+
+        var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToLower() == cleanCode.ToLower());
+        if (emp == null)
+        {
+            // Onboard worker through biometric form
+            // EmpCode = cleanCode, FullName = dto.EmployeeName
+            // Position/Designation: DO NOT map form.PositionDesignation (default to "Colliery Worker")
+            // Category: Executive -> IsHigherAuthority
+            // Location: if matched, assign SubAreaId; otherwise null (add later manually or in bulk)
+            emp = new Employee
+            {
+                EmpCode = cleanCode.ToUpperInvariant(),
+                FullName = !string.IsNullOrWhiteSpace(dto.EmployeeName) ? dto.EmployeeName.Trim() : cleanCode.ToUpperInvariant(),
+                Designation = "Colliery Worker",
+                SubAreaId = matchedSubArea?.Id,
+                IsHigherAuthority = isExecutive,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.Employees.Add(emp);
+            await _context.SaveChangesAsync();
+
+            entity.EmployeeId = emp.Id;
+
+            // Retroactively link past flagged punches & muster summaries
+            try
+            {
+                var pastFlagged = await _context.AttendanceLogs
+                    .Where(l => l.EmpCode.ToUpper() == emp.EmpCode && (l.EmployeeId == null || l.IsFlagged))
+                    .ToListAsync();
+                foreach (var p in pastFlagged)
+                {
+                    p.EmployeeId = emp.Id;
+                    p.Status = "Verified";
+                    p.IsFlagged = false;
+                }
+
+                var pastSummaries = await _context.AttendanceDailySummaries
+                    .Where(s => s.EmpCode.ToUpper() == emp.EmpCode && (s.EmployeeId == null || s.IsFlagged))
+                    .ToListAsync();
+                foreach (var s in pastSummaries)
+                {
+                    s.EmployeeId = emp.Id;
+                    s.EmployeeName = emp.FullName;
+                    s.Designation = emp.Designation;
+                    s.IsVerified = true;
+                    s.IsFlagged = false;
+                    s.IsHigherAuthority = emp.IsHigherAuthority;
+                }
+            }
+            catch (Exception retroEx)
+            {
+                _logger.LogWarning("Retroactive linking warning on biometric save for {Code}: {Msg}", emp.EmpCode, retroEx.Message);
+            }
+        }
+        else
+        {
+            // Employee already exists: link and update particulars (do NOT overwrite Designation)
+            entity.EmployeeId = emp.Id;
+            if (!string.IsNullOrWhiteSpace(dto.EmployeeName)) emp.FullName = dto.EmployeeName.Trim();
+            if (isExecutive) emp.IsHigherAuthority = true;
+            if (matchedSubArea != null) emp.SubAreaId = matchedSubArea.Id;
         }
 
         // Update Section 1
@@ -382,7 +470,7 @@ public class BiometricFormService : IBiometricFormService
 
                     if (matchedSubArea == null)
                     {
-                        result.Errors.Add($"Line {lineNum} ({empCode}): Location '{locCandidate}' does not exist in ECL Sub-Areas.");
+                        result.Errors.Add($"Line {lineNum} ({empCode}): Location '{locCandidate}' was not recognized in ECL Sub-Areas (worker onboarded with Unassigned location).");
                     }
                 }
 
@@ -394,9 +482,8 @@ public class BiometricFormService : IBiometricFormService
                 var emp = await _context.Employees.FirstOrDefaultAsync(e => e.EmpCode.ToLower() == empCode.ToLower());
                 if (emp != null)
                 {
-                    // Existing worker: update details
+                    // Existing worker: update details (do NOT overwrite Designation from form)
                     if (!string.IsNullOrWhiteSpace(form.EmployeeName)) emp.FullName = form.EmployeeName;
-                    if (!string.IsNullOrWhiteSpace(form.PositionDesignation)) emp.Designation = form.PositionDesignation;
                     if (matchedSubArea != null) emp.SubAreaId = matchedSubArea.Id;
                     if (isExecutive) emp.IsHigherAuthority = true;
 
@@ -405,12 +492,14 @@ public class BiometricFormService : IBiometricFormService
                 else
                 {
                     // Direct onboard worker from bulk template
-                    int assignedSubAreaId = matchedSubArea?.Id ?? (allSubAreas.FirstOrDefault()?.Id ?? 1);
+                    // Designation defaults to "Colliery Worker" (not mapped from form)
+                    // Location: if matched, map it; otherwise leave null for later assignment
+                    int? assignedSubAreaId = matchedSubArea?.Id;
                     var newEmp = new Employee
                     {
                         EmpCode = empCode.ToUpperInvariant(),
                         FullName = !string.IsNullOrWhiteSpace(form.EmployeeName) ? form.EmployeeName : empCode.ToUpperInvariant(),
-                        Designation = !string.IsNullOrWhiteSpace(form.PositionDesignation) ? form.PositionDesignation : "Colliery Worker",
+                        Designation = "Colliery Worker",
                         SubAreaId = assignedSubAreaId,
                         IsHigherAuthority = isExecutive,
                         IsActive = true,

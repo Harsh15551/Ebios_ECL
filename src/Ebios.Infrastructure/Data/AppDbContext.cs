@@ -98,7 +98,8 @@ public class AppDbContext : DbContext
             entity.HasOne(e => e.SubArea)
                   .WithMany()
                   .HasForeignKey(e => e.SubAreaId)
-                  .OnDelete(DeleteBehavior.Cascade);
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // AttendanceLog configuration

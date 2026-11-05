@@ -5,7 +5,7 @@ public record EmployeeDto(
     string EmpCode,
     string FullName,
     string Designation,
-    int SubAreaId,
+    int? SubAreaId,
     string SubAreaName,
     string AreaName,
     List<int> AdditionalSubAreaIds,
@@ -47,7 +47,7 @@ public record CreateEmployeeDto(
     string EmpCode,
     string FullName,
     string Designation,
-    int SubAreaId,
+    int? SubAreaId = null,
     List<int>? AdditionalSubAreaIds = null,
     bool IsHigherAuthority = false
 );
@@ -55,7 +55,7 @@ public record CreateEmployeeDto(
 public record UpdateEmployeeDto(
     string FullName,
     string Designation,
-    int SubAreaId,
+    int? SubAreaId = null,
     List<int>? AdditionalSubAreaIds = null,
     bool IsHigherAuthority = false
 );

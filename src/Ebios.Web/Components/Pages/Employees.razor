@@ -140,6 +140,10 @@
             <div class="col-12 col-md-3">
                 <select class="form-select" @bind="subAreaFilter">
                     <option value="0">All Permitted Units (@PermittedSubAreas.Count() Units)</option>
+                    @if (employees.Any(e => !e.SubAreaId.HasValue || e.SubAreaId.Value == 0))
+                    {
+                        <option value="-1">⚠️ Unassigned Location (@employees.Count(e => !e.SubAreaId.HasValue || e.SubAreaId.Value == 0) Workers)</option>
+                    }
                     @foreach (var sub in PermittedSubAreas)
                     {
                         <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
@@ -214,19 +218,28 @@ else
                                     <span class="badge bg-light text-dark border">@emp.Designation</span>
                                 </td>
                                 <td>
-                                    <div class="fw-semibold text-dark">@emp.SubAreaName</div>
-                                    @if (emp.AdditionalSubAreaNames.Any())
+                                    @if (emp.SubAreaId.HasValue && emp.SubAreaId.Value > 0)
                                     {
-                                        <div class="d-flex flex-wrap gap-1 mt-1">
-                                            @foreach (var addName in emp.AdditionalSubAreaNames)
-                                            {
-                                                <span class="badge bg-info-subtle text-info border border-info-subtle" style="font-size: 0.72rem;">
-                                                    + @addName
-                                                </span>
-                                            }
-                                        </div>
+                                        <div class="fw-semibold text-dark">@emp.SubAreaName</div>
+                                        @if (emp.AdditionalSubAreaNames.Any())
+                                        {
+                                            <div class="d-flex flex-wrap gap-1 mt-1">
+                                                @foreach (var addName in emp.AdditionalSubAreaNames)
+                                                {
+                                                    <span class="badge bg-info-subtle text-info border border-info-subtle" style="font-size: 0.72rem;">
+                                                        + @addName
+                                                    </span>
+                                                }
+                                            </div>
+                                        }
+                                        <small class="text-muted">@emp.AreaName</small>
                                     }
-                                    <small class="text-muted">@emp.AreaName</small>
+                                    else
+                                    {
+                                        <span class="badge bg-warning-subtle text-dark border border-warning" title="No colliery unit assigned. Click Edit or use Bulk Worker Onboard to assign location.">
+                                            <i class="bi bi-geo-alt-fill me-1"></i> Location Not Assigned
+                                        </span>
+                                    }
                                 </td>
                                 <td>
                                     @if (emp.IsSyncedToEbios)
@@ -1303,7 +1316,11 @@ else
                     e.SubAreaName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
             }
 
-            if (subAreaFilter > 0)
+            if (subAreaFilter == -1)
+            {
+                query = query.Where(e => !e.SubAreaId.HasValue || e.SubAreaId.Value == 0);
+            }
+            else if (subAreaFilter > 0)
             {
                 query = query.Where(e => e.SubAreaId == subAreaFilter);
             }
@@ -1387,7 +1404,7 @@ else
 
         editDesignationSelection = !string.IsNullOrWhiteSpace(emp.Designation) ? emp.Designation : (availableDesignations.FirstOrDefault() ?? "Colliery Worker");
 
-        editSubAreaId = emp.SubAreaId;
+        editSubAreaId = emp.SubAreaId ?? 0;
         editAdditionalSubAreaIds = emp.AdditionalSubAreaIds.ToList();
         editSelectedAdditionalSubAreaId = 0;
         showInlineEditAdd = false;
