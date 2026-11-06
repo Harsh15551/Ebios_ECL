@@ -1,4 +1,5 @@
 @inject IBiometricFormService BiometricService
+@inject UserSessionService UserSession
 @inject IJSRuntime JS
 
 @if (IsOpen)
@@ -181,7 +182,14 @@
         try
         {
             using var stream = file.OpenReadStream(maxAllowedSize: 15 * 1024 * 1024);
-            result = await BiometricService.ImportBulkCsvAsync(stream, CurrentUser);
+            result = await BiometricService.ImportBulkCsvAsync(
+                stream, 
+                CurrentUser,
+                performedByUserId: UserSession.CurrentUser?.Id,
+                performedByUsername: UserSession.CurrentUser?.Username,
+                performedByOfficerName: UserSession.CurrentUser?.FullName,
+                performedByRole: UserSession.CurrentUser?.Role.ToString()
+            );
         }
         catch (Exception ex)
         {
@@ -209,7 +217,14 @@
         {
             // Up to 250MB
             using var stream = file.OpenReadStream(maxAllowedSize: 250 * 1024 * 1024);
-            result = await BiometricService.ImportBulkZipAsync(stream, CurrentUser);
+            result = await BiometricService.ImportBulkZipAsync(
+                stream, 
+                CurrentUser,
+                performedByUserId: UserSession.CurrentUser?.Id,
+                performedByUsername: UserSession.CurrentUser?.Username,
+                performedByOfficerName: UserSession.CurrentUser?.FullName,
+                performedByRole: UserSession.CurrentUser?.Role.ToString()
+            );
         }
         catch (Exception ex)
         {

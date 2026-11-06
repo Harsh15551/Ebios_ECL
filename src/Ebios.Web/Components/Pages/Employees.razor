@@ -937,7 +937,7 @@ else
                             <div class="text-end">
                                 @if (targetDeviceEmp.IsBlacklisted)
                                 {
-                                    <span class="badge bg-danger fs-6">🚫 Blacklisted</span>
+                                    <span class="badge bg-danger fs-6">🔒 Gate Access Blocked</span>
                                 }
                                 else if (!targetDeviceEmp.IsActive)
                                 {
@@ -1424,7 +1424,12 @@ else
         try
         {
             var dto = new CreateEmployeeDto(newEmpCode.Trim().ToUpperInvariant(), newFullName.Trim(), resolvedDesignation, newSubAreaId, newAdditionalSubAreaIds, newIsHigherAuthority);
-            var result = await EmployeeService.CreateEmployeeAsync(dto);
+            var result = await EmployeeService.CreateEmployeeAsync(
+                dto,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             successMessage = $"Worker '{result.FullName}' ({result.EmpCode}) onboarded successfully. Biometric registration: {(result.IsSyncedToEbios ? "Synced" : "Queued")}.";
             showCreateModal = false;
             await LoadDataAsync();
@@ -1462,8 +1467,17 @@ else
         {
             var dto = new UpdateEmployeeDto(editFullName.Trim(), resolvedDesignation, editSubAreaId, editAdditionalSubAreaIds, editIsHigherAuthority);
             int? areaIdScope = UserSession.IsAreaAdmin ? UserSession.CurrentUser?.AreaId : null;
+            int? subAreaIdScope = UserSession.IsUnitAdmin ? UserSession.CurrentUser?.SubAreaId : null;
 
-            var (success, msg) = await EmployeeService.UpdateEmployeeAsync(editingEmployeeId, dto, areaIdScope);
+            var (success, msg) = await EmployeeService.UpdateEmployeeAsync(
+                editingEmployeeId, 
+                dto, 
+                areaIdScope,
+                subAreaIdScope,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
 
             if (success)
             {
@@ -1490,7 +1504,14 @@ else
     {
         try
         {
-            var (success, msg) = await EmployeeService.ToggleHigherAuthorityAsync(emp.Id, UserSession.CurrentAreaId);
+            var (success, msg) = await EmployeeService.ToggleHigherAuthorityAsync(
+                emp.Id, 
+                UserSession.CurrentAreaId,
+                UserSession.CurrentSubAreaId,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             if (success)
             {
                 successMessage = msg;
@@ -1528,9 +1549,9 @@ else
         }
     }
 
-    // Bulk Blacklist state
+    // Bulk Turnstile Access state
     private bool isBulkBlacklistModalOpen = false;
-    private string bulkActionReason = "Blacklisted";
+    private string bulkActionReason = "Turnstile Gate Access Control";
     private string bulkEmpCodesInput = string.Empty;
     private string? bulkModalError;
     private string? bulkModalSuccess;
@@ -1548,7 +1569,7 @@ else
     private void OpenBulkBlacklistModal()
     {
         bulkEmpCodesInput = string.Empty;
-        bulkActionReason = "Blacklisted";
+        bulkActionReason = "Turnstile Gate Access Control";
         bulkModalError = null;
         bulkModalSuccess = null;
         isBulkBlacklistModalOpen = true;
@@ -1751,7 +1772,11 @@ else
                 entries,
                 bulkActionReason,
                 UserSession.CurrentAreaId,
-                UserSession.CurrentSubAreaId
+                UserSession.CurrentSubAreaId,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString()
             );
 
             if (successCount > 0)
@@ -1890,7 +1915,13 @@ else
                 return;
             }
 
-            var (successCount, totalCount, errors) = await EmployeeService.BulkCreateEmployeesAsync(entries, UserSession.CurrentSubAreaId);
+            var (successCount, totalCount, errors) = await EmployeeService.BulkCreateEmployeesAsync(
+                entries, 
+                UserSession.CurrentSubAreaId,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             if (errors.Count == 0)
             {
                 successMessage = $"Successfully onboarded/updated {successCount} worker(s). Past punches automatically linked!";
@@ -1952,7 +1983,14 @@ else
         deviceModalSuccess = null;
         try
         {
-            var (success, msg) = await EmployeeService.ToggleWorkerDeviceAccessAsync(targetDeviceEmp.Id, serialNumber, block);
+            var (success, msg) = await EmployeeService.ToggleWorkerDeviceAccessAsync(
+                targetDeviceEmp.Id, 
+                serialNumber, 
+                block,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             if (success)
             {
                 deviceModalSuccess = msg;
@@ -1983,7 +2021,13 @@ else
         deviceModalSuccess = null;
         try
         {
-            var (success, msg) = await EmployeeService.BlockAllDevicesForWorkerAsync(targetDeviceEmp.Id, true);
+            var (success, msg) = await EmployeeService.BlockAllDevicesForWorkerAsync(
+                targetDeviceEmp.Id, 
+                true,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             if (success)
             {
                 deviceModalSuccess = msg;
@@ -2014,7 +2058,13 @@ else
         deviceModalSuccess = null;
         try
         {
-            var (success, msg) = await EmployeeService.BlockAllDevicesForWorkerAsync(targetDeviceEmp.Id, false);
+            var (success, msg) = await EmployeeService.BlockAllDevicesForWorkerAsync(
+                targetDeviceEmp.Id, 
+                false,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             if (success)
             {
                 deviceModalSuccess = msg;

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Ebios.Application.DTOs;
 using Ebios.Application.Interfaces;
 using Ebios.Domain.Entities;
@@ -10,11 +11,16 @@ namespace Ebios.Infrastructure.Services;
 public class AttendanceProcessingService : IAttendanceProcessingService
 {
     private readonly AppDbContext _context;
+    private readonly IAuditService _auditService;
     private readonly ILogger<AttendanceProcessingService> _logger;
 
-    public AttendanceProcessingService(AppDbContext context, ILogger<AttendanceProcessingService> logger)
+    public AttendanceProcessingService(
+        AppDbContext context,
+        IAuditService auditService,
+        ILogger<AttendanceProcessingService> logger)
     {
         _context = context;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -561,16 +567,48 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         return new MusterRollKpiDto(total, present, late, early, doubleShift, singlePunch);
     }
 
-    public async Task<(bool Success, string Message)> RegularizeAttendanceAsync(RegularizeAttendanceDto dto)
+    public async Task<(bool Success, string Message)> RegularizeAttendanceAsync(RegularizeAttendanceDto dto, int? callerAreaId = null, int? callerSubAreaId = null)
     {
         var summary = await _context.AttendanceDailySummaries
             .Include(s => s.Employee)
+                .ThenInclude(e => e!.SubArea)
+            .Include(s => s.SubArea)
             .FirstOrDefaultAsync(s => s.Id == dto.SummaryId);
 
         if (summary == null)
         {
             return (false, "Attendance record not found.");
         }
+
+        // Jurisdiction enforcement: Verify caller has authority over this worker
+        if (callerSubAreaId.HasValue && callerSubAreaId.Value > 0)
+        {
+            int? workerSubAreaId = summary.SubAreaId ?? summary.Employee?.SubAreaId;
+            if (workerSubAreaId != callerSubAreaId.Value)
+            {
+                return (false, $"Permission Denied: Worker '{summary.EmpCode}' belongs to a different colliery unit.");
+            }
+        }
+        else if (callerAreaId.HasValue && callerAreaId.Value > 0)
+        {
+            int? workerAreaId = summary.SubArea?.AreaId ?? summary.Employee?.SubArea?.AreaId;
+            if (workerAreaId != callerAreaId.Value)
+            {
+                return (false, $"Permission Denied: Worker '{summary.EmpCode}' is outside your assigned mining area jurisdiction.");
+            }
+        }
+
+        bool isOverwrite = summary.IsManuallyCorrected;
+        string? previousOfficer = summary.CorrectedBy;
+        string? oldStateJson = isOverwrite ? JsonSerializer.Serialize(new
+        {
+            FirstInTime = summary.FirstInTime?.ToString("HH:mm:ss"),
+            LastOutTime = summary.LastOutTime?.ToString("HH:mm:ss"),
+            ShiftCode = summary.ShiftCode,
+            CorrectionReason = summary.CorrectionReason,
+            CorrectedBy = summary.CorrectedBy,
+            CorrectedAt = summary.CorrectedAt
+        }) : null;
 
         if (dto.InTime.HasValue)
         {
@@ -647,20 +685,78 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         }
 
         await _context.SaveChangesAsync();
+
+        string newStateJson = JsonSerializer.Serialize(new
+        {
+            FirstInTime = summary.FirstInTime?.ToString("HH:mm:ss"),
+            LastOutTime = summary.LastOutTime?.ToString("HH:mm:ss"),
+            ShiftCode = summary.ShiftCode,
+            CorrectionReason = summary.CorrectionReason,
+            CorrectedBy = summary.CorrectedBy,
+            CorrectedAt = summary.CorrectedAt
+        });
+
+        string auditDetails = isOverwrite
+            ? $"Previous regularization by '{previousOfficer}' overwritten by '{dto.CorrectedBy}'. Reason: {dto.Reason}"
+            : $"Attendance regularized by '{dto.CorrectedBy}'. Reason: {dto.Reason}";
+
+        await _auditService.LogRegularizationAsync(
+            summary.EmpCode,
+            summary.AttendanceDate,
+            oldStateJson,
+            newStateJson,
+            isOverwrite,
+            auditDetails,
+            null,
+            dto.CorrectedBy,
+            dto.CorrectedBy,
+            "Manager");
+
         _logger.LogInformation("Regularized attendance record {Id} for worker {EmpCode} by {User}. Reason: {Reason}", summary.Id, summary.EmpCode, dto.CorrectedBy, dto.Reason);
         return (true, $"Attendance for {summary.EmpCode} on {summary.AttendanceDate:dd-MM-yyyy} regularized successfully.");
     }
 
-    public async Task<(bool Success, string Message)> RevertToMachinePunchesAsync(int summaryId)
+    public async Task<(bool Success, string Message)> RevertToMachinePunchesAsync(int summaryId, int? callerAreaId = null, int? callerSubAreaId = null)
     {
         var summary = await _context.AttendanceDailySummaries
             .Include(s => s.Employee)
+                .ThenInclude(e => e!.SubArea)
+            .Include(s => s.SubArea)
             .FirstOrDefaultAsync(s => s.Id == summaryId);
 
         if (summary == null)
         {
             return (false, "Attendance record not found.");
         }
+
+        // Jurisdiction enforcement: Verify caller has authority over this worker
+        if (callerSubAreaId.HasValue && callerSubAreaId.Value > 0)
+        {
+            int? workerSubAreaId = summary.SubAreaId ?? summary.Employee?.SubAreaId;
+            if (workerSubAreaId != callerSubAreaId.Value)
+            {
+                return (false, $"Permission Denied: Worker '{summary.EmpCode}' belongs to a different colliery unit.");
+            }
+        }
+        else if (callerAreaId.HasValue && callerAreaId.Value > 0)
+        {
+            int? workerAreaId = summary.SubArea?.AreaId ?? summary.Employee?.SubArea?.AreaId;
+            if (workerAreaId != callerAreaId.Value)
+            {
+                return (false, $"Permission Denied: Worker '{summary.EmpCode}' is outside your assigned mining area jurisdiction.");
+            }
+        }
+
+        string? previousOfficer = summary.CorrectedBy;
+        string? oldStateJson = JsonSerializer.Serialize(new
+        {
+            FirstInTime = summary.FirstInTime?.ToString("HH:mm:ss"),
+            LastOutTime = summary.LastOutTime?.ToString("HH:mm:ss"),
+            ShiftCode = summary.ShiftCode,
+            CorrectionReason = summary.CorrectionReason,
+            CorrectedBy = summary.CorrectedBy,
+            CorrectedAt = summary.CorrectedAt
+        });
 
         var startOfDay = DateTime.SpecifyKind(summary.AttendanceDate.Date, DateTimeKind.Utc);
         var endOfDay = DateTime.SpecifyKind(summary.AttendanceDate.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
@@ -796,14 +892,41 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         summary.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+
+        string newStateJson = JsonSerializer.Serialize(new
+        {
+            FirstInTime = summary.FirstInTime?.ToString("HH:mm:ss"),
+            LastOutTime = summary.LastOutTime?.ToString("HH:mm:ss"),
+            ShiftCode = summary.ShiftCode,
+            Status = summary.Status,
+            IsManuallyCorrected = false
+        });
+
+        await _auditService.LogRegularizationAsync(
+            summary.EmpCode,
+            summary.AttendanceDate,
+            oldStateJson,
+            newStateJson,
+            isOverwrite: true,
+            details: $"Manual regularization previously set by '{previousOfficer}' was reverted back to raw machine punches.",
+            userId: null,
+            username: "Officer",
+            officerName: "Officer",
+            role: "Manager");
+
         _logger.LogInformation("Reverted attendance record {Id} for worker {EmpCode} to machine punches.", summary.Id, summary.EmpCode);
         return (true, $"Attendance for {summary.EmpCode} reverted to turnstile machine punches.");
     }
 
-    public async Task<BulkRegularizeResultDto> BulkRegularizeAsync(List<BulkRegularizeEntryDto> entries, string adminUsername)
+    public async Task<BulkRegularizeResultDto> BulkRegularizeAsync(
+        List<BulkRegularizeEntryDto> entries, 
+        string adminUsername,
+        int? callerAreaId = null,
+        int? callerSubAreaId = null)
     {
         int successCount = 0;
         var errors = new List<string>();
+        var pendingAuditLogs = new List<(string EmpCode, DateTime Date, string? OldJson, string NewJson, bool IsOverwrite, string Details)>();
 
         var allShifts = await _context.ShiftMasters.AsNoTracking().Where(s => s.IsActive).ToListAsync();
 
@@ -819,7 +942,40 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                     .FirstOrDefaultAsync(e => e.EmpCode.ToUpper() == cleanCode);
 
                 var summary = await _context.AttendanceDailySummaries
+                    .Include(s => s.SubArea)
                     .FirstOrDefaultAsync(s => s.EmpCode.ToUpper() == cleanCode && s.AttendanceDate == targetDate);
+
+                // Jurisdiction enforcement: Ensure caller has authority over this worker or their attendance location
+                if (callerSubAreaId.HasValue && callerSubAreaId.Value > 0)
+                {
+                    int? targetSubAreaId = emp?.SubAreaId ?? summary?.SubAreaId;
+                    if (targetSubAreaId.HasValue && targetSubAreaId.Value != callerSubAreaId.Value)
+                    {
+                        errors.Add($"Worker '{cleanCode}': Skipped - Outside your assigned colliery unit jurisdiction.");
+                        continue;
+                    }
+                }
+                else if (callerAreaId.HasValue && callerAreaId.Value > 0)
+                {
+                    int? targetAreaId = emp?.SubArea?.AreaId ?? summary?.SubArea?.AreaId;
+                    if (targetAreaId.HasValue && targetAreaId.Value != callerAreaId.Value)
+                    {
+                        errors.Add($"Worker '{cleanCode}': Skipped - Outside your assigned mining area jurisdiction.");
+                        continue;
+                    }
+                }
+
+                bool isOverwrite = summary?.IsManuallyCorrected == true;
+                string? previousOfficer = summary?.CorrectedBy;
+                string? oldStateJson = isOverwrite && summary != null ? JsonSerializer.Serialize(new
+                {
+                    FirstInTime = summary.FirstInTime?.ToString("HH:mm:ss"),
+                    LastOutTime = summary.LastOutTime?.ToString("HH:mm:ss"),
+                    ShiftCode = summary.ShiftCode,
+                    CorrectionReason = summary.CorrectionReason,
+                    CorrectedBy = summary.CorrectedBy,
+                    CorrectedAt = summary.CorrectedAt
+                }) : null;
 
                 if (summary == null)
                 {
@@ -906,6 +1062,21 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                     summary.Status = "Present";
                 }
 
+                string newStateJson = JsonSerializer.Serialize(new
+                {
+                    FirstInTime = summary.FirstInTime?.ToString("HH:mm:ss"),
+                    LastOutTime = summary.LastOutTime?.ToString("HH:mm:ss"),
+                    ShiftCode = summary.ShiftCode,
+                    CorrectionReason = summary.CorrectionReason,
+                    CorrectedBy = adminUsername,
+                    CorrectedAt = summary.CorrectedAt
+                });
+
+                string details = isOverwrite
+                    ? $"Bulk CSV: Regularization by '{previousOfficer}' was overwritten by '{adminUsername}'. Reason: {entry.Reason}"
+                    : $"Bulk CSV: Regularized by '{adminUsername}'. Reason: {entry.Reason}";
+
+                pendingAuditLogs.Add((cleanCode, targetDate, oldStateJson, newStateJson, isOverwrite, details));
                 successCount++;
             }
             catch (Exception ex)
@@ -917,6 +1088,22 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         if (successCount > 0)
         {
             await _context.SaveChangesAsync();
+
+            // Persist audit trail for all modified records
+            foreach (var log in pendingAuditLogs)
+            {
+                await _auditService.LogRegularizationAsync(
+                    log.EmpCode,
+                    log.Date,
+                    log.OldJson,
+                    log.NewJson,
+                    log.IsOverwrite,
+                    log.Details,
+                    null,
+                    adminUsername,
+                    adminUsername,
+                    "Manager");
+            }
         }
 
         return new BulkRegularizeResultDto(successCount, entries.Count, errors);

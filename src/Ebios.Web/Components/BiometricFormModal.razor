@@ -1,4 +1,5 @@
 @inject IBiometricFormService BiometricService
+@inject UserSessionService UserSession
 @inject IJSRuntime JS
 
 @if (IsOpen && Model != null)
@@ -555,7 +556,14 @@
 
         try
         {
-            Model = await BiometricService.SaveFormAsync(Model, CurrentUser);
+            Model = await BiometricService.SaveFormAsync(
+                Model, 
+                CurrentUser,
+                performedByUserId: UserSession.CurrentUser?.Id,
+                performedByUsername: UserSession.CurrentUser?.Username,
+                performedByOfficerName: UserSession.CurrentUser?.FullName,
+                performedByRole: UserSession.CurrentUser?.Role.ToString()
+            );
             statusMessage = "Biometric form particulars saved successfully!";
         }
         catch (Exception ex)
@@ -581,7 +589,17 @@
 
             // Limit image upload to 10MB
             using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-            var relativePath = await BiometricService.UploadPhotoAsync(Model.EmpCode, boxType, stream, file.Name, CurrentUser);
+            var relativePath = await BiometricService.UploadPhotoAsync(
+                Model.EmpCode, 
+                boxType, 
+                stream, 
+                file.Name, 
+                CurrentUser,
+                performedByUserId: UserSession.CurrentUser?.Id,
+                performedByUsername: UserSession.CurrentUser?.Username,
+                performedByOfficerName: UserSession.CurrentUser?.FullName,
+                performedByRole: UserSession.CurrentUser?.Role.ToString()
+            );
 
             // Refresh model DTO
             Model = await BiometricService.GetOrCreateFormByEmpCodeAsync(Model.EmpCode);
@@ -607,7 +625,16 @@
 
             // Allow up to 25MB for scanned PDF
             using var stream = file.OpenReadStream(maxAllowedSize: 25 * 1024 * 1024);
-            var relativePath = await BiometricService.UploadSignedPhysicalFormAsync(Model.EmpCode, stream, file.Name, CurrentUser);
+            var relativePath = await BiometricService.UploadSignedPhysicalFormAsync(
+                Model.EmpCode, 
+                stream, 
+                file.Name, 
+                CurrentUser,
+                performedByUserId: UserSession.CurrentUser?.Id,
+                performedByUsername: UserSession.CurrentUser?.Username,
+                performedByOfficerName: UserSession.CurrentUser?.FullName,
+                performedByRole: UserSession.CurrentUser?.Role.ToString()
+            );
 
             Model = await BiometricService.GetOrCreateFormByEmpCodeAsync(Model.EmpCode);
             statusMessage = "Scanned completed physical form uploaded successfully!";

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Ebios.Application.DTOs;
 using Ebios.Application.Interfaces;
 using Ebios.Infrastructure.Data;
@@ -8,10 +9,12 @@ namespace Ebios.Infrastructure.Services;
 public class ShiftService : IShiftService
 {
     private readonly AppDbContext _context;
+    private readonly IAuditService _auditService;
 
-    public ShiftService(AppDbContext context)
+    public ShiftService(AppDbContext context, IAuditService auditService)
     {
         _context = context;
+        _auditService = auditService;
     }
 
     public async Task<List<ShiftMasterDto>> GetAllShiftsAsync()
@@ -86,7 +89,12 @@ public class ShiftService : IShiftService
         );
     }
 
-    public async Task<bool> CreateShiftAsync(CreateShiftDto dto)
+    public async Task<bool> CreateShiftAsync(
+        CreateShiftDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         if (string.IsNullOrWhiteSpace(dto.ShiftCode) || string.IsNullOrWhiteSpace(dto.ShiftName))
             return false;
@@ -114,10 +122,41 @@ public class ShiftService : IShiftService
 
         _context.ShiftMasters.Add(shift);
         await _context.SaveChangesAsync();
+
+        var newState = new
+        {
+            shift.Id,
+            shift.ShiftCode,
+            shift.ShiftName,
+            shift.StartTime,
+            shift.EndTime,
+            shift.GraceMinutes,
+            shift.DurationHours,
+            shift.IsNightShift,
+            shift.IsActive
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "SHIFT_CREATED",
+            $"SHIFT:{shift.ShiftCode}",
+            $"Shift timing '{shift.ShiftName}' ({shift.ShiftCode}) [{shift.StartTime}-{shift.EndTime}] created by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(newState));
+
         return true;
     }
 
-    public async Task<bool> UpdateShiftAsync(int id, UpdateShiftDto dto)
+    public async Task<bool> UpdateShiftAsync(
+        int id, 
+        UpdateShiftDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var shift = await _context.ShiftMasters.FindAsync(id);
         if (shift == null) return false;
@@ -125,6 +164,19 @@ public class ShiftService : IShiftService
         string cleanCode = dto.ShiftCode.Trim();
         bool codeConflict = await _context.ShiftMasters.AnyAsync(s => s.Id != id && s.ShiftCode.ToUpper() == cleanCode.ToUpper());
         if (codeConflict) return false;
+
+        var previousState = new
+        {
+            shift.Id,
+            shift.ShiftCode,
+            shift.ShiftName,
+            shift.StartTime,
+            shift.EndTime,
+            shift.GraceMinutes,
+            shift.DurationHours,
+            shift.IsNightShift,
+            shift.IsActive
+        };
 
         shift.ShiftCode = cleanCode;
         shift.ShiftName = dto.ShiftName.Trim();
@@ -140,10 +192,40 @@ public class ShiftService : IShiftService
         shift.IsActive = dto.IsActive;
 
         await _context.SaveChangesAsync();
+
+        var newState = new
+        {
+            shift.Id,
+            shift.ShiftCode,
+            shift.ShiftName,
+            shift.StartTime,
+            shift.EndTime,
+            shift.GraceMinutes,
+            shift.DurationHours,
+            shift.IsNightShift,
+            shift.IsActive
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "SHIFT_UPDATED",
+            $"SHIFT:{shift.ShiftCode}",
+            $"Shift timing '{shift.ShiftName}' ({shift.ShiftCode}) [{shift.StartTime}-{shift.EndTime}] modified by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            JsonSerializer.Serialize(previousState),
+            JsonSerializer.Serialize(newState));
+
         return true;
     }
 
-    public async Task<bool> DeleteShiftAsync(int id)
+    public async Task<bool> DeleteShiftAsync(
+        int id,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var shift = await _context.ShiftMasters.FindAsync(id);
         if (shift == null) return false;
@@ -163,6 +245,18 @@ public class ShiftService : IShiftService
         }
 
         await _context.SaveChangesAsync();
+
+        await _auditService.LogSecurityActionAsync(
+            "SHIFT_DELETED",
+            $"SHIFT:{shift.ShiftCode}",
+            $"Shift timing '{shift.ShiftName}' ({shift.ShiftCode}) was {(inUse ? "deactivated" : "deleted")} by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            null,
+            null);
+
         return true;
     }
 }

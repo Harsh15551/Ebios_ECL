@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Ebios.Application.DTOs;
 using Ebios.Application.Interfaces;
 using Ebios.Domain.Entities;
@@ -11,12 +12,18 @@ public class AreaService : IAreaService
 {
     private readonly AppDbContext _context;
     private readonly IEbiosSoapService _ebiosSoapService;
+    private readonly IAuditService _auditService;
     private readonly ILogger<AreaService> _logger;
 
-    public AreaService(AppDbContext context, IEbiosSoapService ebiosSoapService, ILogger<AreaService> logger)
+    public AreaService(
+        AppDbContext context, 
+        IEbiosSoapService ebiosSoapService, 
+        IAuditService auditService,
+        ILogger<AreaService> logger)
     {
         _context = context;
         _ebiosSoapService = ebiosSoapService;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -49,7 +56,12 @@ public class AreaService : IAreaService
         return new AreaDto(a.Id, a.AreaCode, a.AreaName, a.Headquarters, a.IsActive, a.SubAreas.Count, a.CreatedAt);
     }
 
-    public async Task<AreaDto> CreateAreaAsync(CreateAreaDto dto)
+    public async Task<AreaDto> CreateAreaAsync(
+        CreateAreaDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         string normalizedCode = dto.AreaCode.Trim().ToUpperInvariant();
         if (await _context.Areas.AnyAsync(a => a.AreaCode == normalizedCode))
@@ -69,10 +81,36 @@ public class AreaService : IAreaService
         _context.Areas.Add(area);
         await _context.SaveChangesAsync();
 
+        var newState = new
+        {
+            area.Id,
+            area.AreaCode,
+            area.AreaName,
+            area.Headquarters,
+            area.IsActive
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "MINING_AREA_CREATED",
+            $"AREA:{area.AreaCode}",
+            $"Mining Area '{area.AreaName}' ({area.AreaCode}) created with HQ [{area.Headquarters}] by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(newState));
+
         return new AreaDto(area.Id, area.AreaCode, area.AreaName, area.Headquarters, area.IsActive, 0, area.CreatedAt);
     }
 
-    public async Task<bool> UpdateAreaAsync(int id, CreateAreaDto dto)
+    public async Task<bool> UpdateAreaAsync(
+        int id, 
+        CreateAreaDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var area = await _context.Areas.FindAsync(id);
         if (area == null) return false;
@@ -83,11 +121,41 @@ public class AreaService : IAreaService
             throw new InvalidOperationException($"Area with code '{normalizedCode}' already exists.");
         }
 
+        var previousState = new
+        {
+            area.Id,
+            area.AreaCode,
+            area.AreaName,
+            area.Headquarters,
+            area.IsActive
+        };
+
         area.AreaCode = normalizedCode;
         area.AreaName = dto.AreaName.Trim();
         area.Headquarters = string.IsNullOrWhiteSpace(dto.Headquarters) ? "ECL HQ" : dto.Headquarters.Trim();
 
         await _context.SaveChangesAsync();
+
+        var newState = new
+        {
+            area.Id,
+            area.AreaCode,
+            area.AreaName,
+            area.Headquarters,
+            area.IsActive
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "MINING_AREA_UPDATED",
+            $"AREA:{area.AreaCode}",
+            $"Mining Area '{area.AreaName}' ({area.AreaCode}) details updated by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            JsonSerializer.Serialize(previousState),
+            JsonSerializer.Serialize(newState));
+
         return true;
     }
 
@@ -140,7 +208,12 @@ public class AreaService : IAreaService
             s.CreatedAt);
     }
 
-    public async Task<SubAreaDto> CreateSubAreaAsync(CreateSubAreaDto dto)
+    public async Task<SubAreaDto> CreateSubAreaAsync(
+        CreateSubAreaDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         string normalizedCode = dto.SubAreaCode.Trim().ToUpperInvariant();
         if (await _context.SubAreas.AnyAsync(s => s.SubAreaCode == normalizedCode))
@@ -165,6 +238,27 @@ public class AreaService : IAreaService
 
         _context.SubAreas.Add(subArea);
         await _context.SaveChangesAsync();
+
+        var newState = new
+        {
+            subArea.Id,
+            subArea.SubAreaCode,
+            subArea.SubAreaName,
+            subArea.AreaId,
+            AreaName = area.AreaName,
+            subArea.IsActive
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "COLLIERY_UNIT_CREATED",
+            $"UNIT:{subArea.SubAreaCode}",
+            $"Colliery Unit '{subArea.SubAreaName}' ({subArea.SubAreaCode}) created under Area '{area.AreaName}' by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(newState));
 
         // Sync SubArea as Location to eBios SOAP server
         try
@@ -200,7 +294,13 @@ public class AreaService : IAreaService
             subArea.CreatedAt);
     }
 
-    public async Task<bool> UpdateSubAreaAsync(int id, CreateSubAreaDto dto)
+    public async Task<bool> UpdateSubAreaAsync(
+        int id, 
+        CreateSubAreaDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var subArea = await _context.SubAreas.Include(s => s.Area).FirstOrDefaultAsync(s => s.Id == id);
         if (subArea == null) return false;
@@ -211,16 +311,48 @@ public class AreaService : IAreaService
             throw new InvalidOperationException($"Sub-Area with code '{normalizedCode}' already exists.");
         }
 
+        var area = await _context.Areas.FindAsync(dto.AreaId);
+
+        var previousState = new
+        {
+            subArea.Id,
+            subArea.SubAreaCode,
+            subArea.SubAreaName,
+            subArea.AreaId,
+            AreaName = subArea.Area?.AreaName,
+            subArea.IsActive
+        };
+
         subArea.SubAreaCode = normalizedCode;
         subArea.SubAreaName = dto.SubAreaName.Trim();
         subArea.AreaId = dto.AreaId;
 
         await _context.SaveChangesAsync();
 
+        var newState = new
+        {
+            subArea.Id,
+            subArea.SubAreaCode,
+            subArea.SubAreaName,
+            subArea.AreaId,
+            AreaName = area?.AreaName ?? subArea.Area?.AreaName,
+            subArea.IsActive
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "COLLIERY_UNIT_UPDATED",
+            $"UNIT:{subArea.SubAreaCode}",
+            $"Colliery Unit '{subArea.SubAreaName}' ({subArea.SubAreaCode}) updated by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            JsonSerializer.Serialize(previousState),
+            JsonSerializer.Serialize(newState));
+
         // Update in eBios as well
         try
         {
-            var area = await _context.Areas.FindAsync(dto.AreaId);
             string description = $"{(area != null ? area.AreaName : "ECL")} - {subArea.SubAreaName}";
             var (success, _) = await _ebiosSoapService.UpdateLocationAsync(subArea.SubAreaCode, description);
             if (success)

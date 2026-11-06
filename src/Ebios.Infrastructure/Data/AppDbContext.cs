@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<AttendanceDailySummary> AttendanceDailySummaries => Set<AttendanceDailySummary>();
     public DbSet<DesignationMaster> DesignationMasters => Set<DesignationMaster>();
     public DbSet<EmployeeBiometricForm> EmployeeBiometricForms => Set<EmployeeBiometricForm>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -237,6 +238,19 @@ public class AppDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(f => f.EmployeeId)
                   .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // AuditLog configuration
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            entity.HasKey(a => a.Id);
+            entity.HasIndex(a => a.Category);
+            entity.HasIndex(a => a.Timestamp);
+            entity.HasIndex(a => a.EntityReference);
+            entity.Property(a => a.Category).HasMaxLength(50).IsRequired();
+            entity.Property(a => a.Action).HasMaxLength(100).IsRequired();
+            entity.Property(a => a.EntityReference).HasMaxLength(200).IsRequired();
+            entity.Property(a => a.Status).HasMaxLength(50).IsRequired();
         });
     }
 }

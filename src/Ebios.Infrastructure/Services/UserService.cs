@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Ebios.Application.DTOs;
 using Ebios.Application.Interfaces;
 using Ebios.Domain.Entities;
@@ -17,17 +18,20 @@ public class UserService : IUserService
     private readonly AppDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly IEmailService _emailService;
+    private readonly IAuditService _auditService;
     private readonly ILogger<UserService> _logger;
 
     public UserService(
         AppDbContext context,
         IConfiguration configuration,
         IEmailService emailService,
+        IAuditService auditService,
         ILogger<UserService> logger)
     {
         _context = context;
         _configuration = configuration;
         _emailService = emailService;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -101,7 +105,12 @@ public class UserService : IUserService
             u.CanManageShifts);
     }
 
-    public async Task<UserDto> CreateUserAsync(CreateUserDto dto)
+    public async Task<UserDto> CreateUserAsync(
+        CreateUserDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         string normalizedUsername = dto.Username.Trim().ToLowerInvariant();
         if (await _context.Users.AnyAsync(u => u.Username == normalizedUsername))
@@ -139,24 +148,89 @@ public class UserService : IUserService
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
 
+        var newState = new
+        {
+            user.Id,
+            user.Username,
+            user.FullName,
+            user.Email,
+            Role = user.Role.ToString(),
+            user.AreaId,
+            user.SubAreaId,
+            user.CanManageEmployees,
+            user.CanManageShifts,
+            user.IsActive
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "USER_CREATED",
+            $"User:{user.Username}",
+            $"User account '{user.FullName}' ({user.Username}, Role: {user.Role}) was created by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "SuperAdmin",
+            null,
+            JsonSerializer.Serialize(newState));
+
         return (await GetUserByIdAsync(user.Id))!;
     }
 
-    public async Task<bool> ToggleUserStatusAsync(int id)
+    public async Task<bool> ToggleUserStatusAsync(
+        int id,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var user = await _context.Users.FindAsync(id);
         if (user == null) return false;
 
+        bool oldIsActive = user.IsActive;
         user.IsActive = !user.IsActive;
         await _context.SaveChangesAsync();
+
         _logger.LogInformation("Toggled active status for user {Username} to {Status}", user.Username, user.IsActive);
+
+        var previousState = new { user.Id, user.Username, user.FullName, IsActive = oldIsActive, Role = user.Role.ToString() };
+        var newState = new { user.Id, user.Username, user.FullName, IsActive = user.IsActive, Role = user.Role.ToString() };
+
+        string action = user.IsActive ? "USER_ACTIVATED" : "USER_DEACTIVATED";
+        string statusText = user.IsActive ? "ACTIVATED / ENABLED" : "DEACTIVATED / DISABLED";
+
+        await _auditService.LogSecurityActionAsync(
+            action,
+            $"User:{user.Username}",
+            $"User account '{user.FullName}' ({user.Username}, Role: {user.Role}) was {statusText} by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "SuperAdmin",
+            JsonSerializer.Serialize(previousState),
+            JsonSerializer.Serialize(newState));
+
         return true;
     }
 
-    public async Task<bool> UpdateUserPermissionsAsync(UpdateUserPermissionsDto dto)
+    public async Task<bool> UpdateUserPermissionsAsync(
+        UpdateUserPermissionsDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var user = await _context.Users.FindAsync(dto.UserId);
         if (user == null) return false;
+
+        var previousState = new
+        {
+            user.Id,
+            user.Username,
+            user.FullName,
+            Role = user.Role.ToString(),
+            user.CanManageEmployees,
+            user.CanManageShifts
+        };
 
         user.CanManageEmployees = dto.CanManageEmployees;
         user.CanManageShifts = dto.CanManageShifts;
@@ -164,6 +238,30 @@ public class UserService : IUserService
 
         _logger.LogInformation("Updated permissions for user {Username} (Id: {UserId}): CanManageEmployees={Employees}, CanManageShifts={Shifts}",
             user.Username, user.Id, user.CanManageEmployees, user.CanManageShifts);
+
+        var newState = new
+        {
+            user.Id,
+            user.Username,
+            user.FullName,
+            Role = user.Role.ToString(),
+            user.CanManageEmployees,
+            user.CanManageShifts
+        };
+
+        string empPermChange = $"CanManageEmployees: {previousState.CanManageEmployees} -> {newState.CanManageEmployees}";
+        string shiftPermChange = $"CanManageShifts: {previousState.CanManageShifts} -> {newState.CanManageShifts}";
+
+        await _auditService.LogSecurityActionAsync(
+            "USER_PERMISSIONS_CHANGED",
+            $"User:{user.Username}",
+            $"Permissions updated for '{user.FullName}' ({user.Username}) by {performedByUsername ?? "Admin"} ({empPermChange}, {shiftPermChange}).",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "SuperAdmin",
+            JsonSerializer.Serialize(previousState),
+            JsonSerializer.Serialize(newState));
 
         return true;
     }
@@ -340,7 +438,12 @@ public class UserService : IUserService
         return (true, "Two-Factor Authentication has been disabled.");
     }
 
-    public async Task<(bool Success, string Message)> AdminResetTwoFactorAsync(int targetUserId)
+    public async Task<(bool Success, string Message)> AdminResetTwoFactorAsync(
+        int targetUserId,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var user = await _context.Users.FindAsync(targetUserId);
         if (user == null)
@@ -350,6 +453,17 @@ public class UserService : IUserService
         user.TwoFactorSecret = null;
         user.TwoFactorRecoveryCodes = null;
         await _context.SaveChangesAsync();
+
+        await _auditService.LogSecurityActionAsync(
+            "2FA_ADMIN_RESET",
+            $"User:{user.Username}",
+            $"Two-factor authentication was administratively reset for {user.FullName} ({user.Username}) by {performedByUsername ?? "Admin"}.",
+            performedByUserId ?? user.Id,
+            performedByUsername ?? user.Username,
+            performedByOfficerName ?? user.FullName,
+            performedByRole ?? user.Role.ToString(),
+            JsonSerializer.Serialize(new { TwoFactorEnabled = true }),
+            JsonSerializer.Serialize(new { TwoFactorEnabled = false }));
 
         _logger.LogInformation("Administrator reset 2FA for user {Username} (ID {Id})", user.Username, user.Id);
         return (true, $"Two-Factor Authentication for {user.FullName} ({user.Username}) has been reset. They can now log in using password only.");
@@ -635,6 +749,15 @@ public class UserService : IUserService
         admin.EmergencyLoginOtp = null;
         admin.EmergencyLoginOtpExpiry = null;
         await _context.SaveChangesAsync();
+
+        await _auditService.LogSecurityActionAsync(
+            "SUPERADMIN_EMERGENCY_LOGIN",
+            $"SuperAdmin:{admin.Username}",
+            "SuperAdmin authenticated via emergency email break-glass code.",
+            admin.Id,
+            admin.Username,
+            admin.FullName,
+            admin.Role.ToString());
 
         _logger.LogWarning("SECURITY ALERT: SuperAdmin {Username} authenticated via Emergency Access Code!", admin.Username);
 

@@ -9,8 +9,8 @@ public interface IAttendanceProcessingService
     Task<int> RecalculateDailyMusterRollAsync(DateTime fromDate, DateTime toDate, int? subAreaId = null);
     Task<List<DailyMusterRollDto>> GetMusterRollReportAsync(MusterRollFilterDto filter, int? userAreaId = null, int? userSubAreaId = null);
     Task<MusterRollKpiDto> GetMusterRollKpisAsync(DateTime fromDate, DateTime toDate, int? userAreaId = null, int? userSubAreaId = null);
-    Task<(bool Success, string Message)> RegularizeAttendanceAsync(RegularizeAttendanceDto dto);
-    Task<(bool Success, string Message)> RevertToMachinePunchesAsync(int summaryId);
-    Task<BulkRegularizeResultDto> BulkRegularizeAsync(List<BulkRegularizeEntryDto> entries, string adminUsername);
+    Task<(bool Success, string Message)> RegularizeAttendanceAsync(RegularizeAttendanceDto dto, int? callerAreaId = null, int? callerSubAreaId = null);
+    Task<(bool Success, string Message)> RevertToMachinePunchesAsync(int summaryId, int? callerAreaId = null, int? callerSubAreaId = null);
+    Task<BulkRegularizeResultDto> BulkRegularizeAsync(List<BulkRegularizeEntryDto> entries, string adminUsername, int? callerAreaId = null, int? callerSubAreaId = null);
 }
 

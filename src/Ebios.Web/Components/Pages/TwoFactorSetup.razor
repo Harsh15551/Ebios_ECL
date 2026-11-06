@@ -7,44 +7,79 @@
 
 <PageTitle>Two-Factor Authentication Setup - ECL eBios</PageTitle>
 
-<div class="container-fluid px-0 py-2" style="max-width: 800px;">
+<div class="container-fluid px-0 py-2" style="max-width: 860px;">
     <!-- Breadcrumb & Header -->
-    <div class="d-flex align-items-center justify-content-between mb-4">
+    <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-3">
         <div>
-            <h2 class="h3 fw-bold mb-1">
-                <i class="bi bi-shield-lock-fill text-primary me-2"></i> Two-Factor Authentication (2FA)
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-1 small">
+                    <li class="breadcrumb-item"><a href="/" class="text-decoration-none text-muted"><i class="bi bi-house-door me-1"></i>Dashboard</a></li>
+                    <li class="breadcrumb-item text-muted">Security</li>
+                    <li class="breadcrumb-item active fw-semibold text-primary" aria-current="page">Two-Factor Authentication</li>
+                </ol>
+            </nav>
+            <h2 class="h3 fw-bold mb-1 text-dark d-flex align-items-center gap-2">
+                <i class="bi bi-shield-lock-fill text-primary"></i> Two-Factor Authentication (2FA)
             </h2>
             <p class="text-muted small mb-0">Secure your ECL eBios account using an authenticator app (TOTP) on your mobile device.</p>
         </div>
-        <a href="" class="btn btn-outline-secondary btn-sm">
-            <i class="bi bi-arrow-left me-1"></i> Dashboard
-        </a>
+        <div>
+            <a href="/" class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-2 px-3 py-2 shadow-sm">
+                <i class="bi bi-arrow-left"></i>
+                <span>Back to Dashboard</span>
+            </a>
+        </div>
     </div>
 
     @if (!string.IsNullOrEmpty(statusMessage))
     {
         <div class="alert @(isStatusError ? "alert-danger" : "alert-success") alert-dismissible fade show shadow-sm mb-4" role="alert">
-            <strong>@(isStatusError ? "Error: " : "Success: ")</strong> @statusMessage
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi @(isStatusError ? "bi-exclamation-octagon-fill text-danger" : "bi-check-circle-fill text-success") fs-5"></i>
+                <div>
+                    <strong>@(isStatusError ? "Error: " : "Success: ")</strong> @statusMessage
+                </div>
+            </div>
             <button type="button" class="btn-close" @onclick="@(() => statusMessage = null)"></button>
         </div>
     }
 
     <!-- 2FA Status Card -->
-    <div class="card shadow-sm border-0 mb-4">
+    <div class="card shadow-sm border mb-4">
         <div class="card-body p-4">
-            <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-4">
                 <div class="d-flex align-items-center gap-3">
-                    <div class="rounded-circle d-flex align-items-center justify-content-center @(is2FaActive ? "bg-success-subtle text-success" : "bg-warning-subtle text-warning")" style="width: 52px; height: 52px;">
-                        <i class="bi @(is2FaActive ? "bi-shield-check" : "bi-shield-exclamation") fs-3"></i>
+                    <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0 @(is2FaActive ? "bg-success text-white shadow-sm" : "bg-warning-subtle text-warning-emphasis border border-warning")" 
+                         style="width: 58px; height: 58px;">
+                        @if (is2FaActive)
+                        {
+                            <i class="bi bi-shield-fill-check fs-2"></i>
+                        }
+                        else
+                        {
+                            <i class="bi bi-shield-exclamation fs-2"></i>
+                        }
                     </div>
                     <div>
-                        <h5 class="fw-bold mb-1">
-                            Status: @(is2FaActive ? "Active & Protected" : "Not Configured")
-                        </h5>
+                        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                            <h5 class="fw-bold mb-0 text-dark">Two-Factor Status:</h5>
+                            @if (is2FaActive)
+                            {
+                                <span class="badge bg-success-subtle text-success border border-success-subtle d-inline-flex align-items-center gap-1 px-2.5 py-1">
+                                    <i class="bi bi-patch-check-fill"></i> Active &amp; Protected
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle d-inline-flex align-items-center gap-1 px-2.5 py-1">
+                                    <i class="bi bi-exclamation-triangle-fill"></i> Not Configured
+                                </span>
+                            }
+                        </div>
                         <p class="text-muted small mb-0">
                             @(is2FaActive 
-                                ? "Your account is secured with Two-Factor Authentication. A 6-digit code is required on every login." 
-                                : "Add an extra layer of defense against unauthorized access to ECL colliery attendance data.")
+                                ? "Your account is secured with Two-Factor Authentication. A 6-digit dynamic code from your authenticator app is required on every login." 
+                                : "Add a mandatory second defense layer to protect colliery attendance records and administrative settings against unauthorized access.")
                         </p>
                     </div>
                 </div>
@@ -52,21 +87,22 @@
                 <div>
                     @if (is2FaActive)
                     {
-                        <button class="btn btn-outline-danger btn-sm" @onclick="OpenDisablePrompt">
-                            <i class="bi bi-x-circle me-1"></i> Disable 2FA
+                        <button class="btn btn-outline-danger btn-sm d-inline-flex align-items-center gap-2 px-3 py-2 shadow-sm" @onclick="OpenDisablePrompt">
+                            <i class="bi bi-shield-slash"></i>
+                            <span>Disable 2FA</span>
                         </button>
                     }
                     else if (!isSettingUp)
                     {
-                        <button class="btn btn-primary" @onclick="StartSetupAsync" disabled="@isLoading">
+                        <button class="btn btn-primary d-inline-flex align-items-center gap-2 px-3 py-2 shadow-sm" @onclick="StartSetupAsync" disabled="@isLoading">
                             @if (isLoading)
                             {
-                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
                                 <span>Generating Setup...</span>
                             }
                             else
                             {
-                                <i class="bi bi-qr-code-scan me-1"></i>
+                                <i class="bi bi-qr-code-scan"></i>
                                 <span>Set Up Authenticator</span>
                             }
                         </button>

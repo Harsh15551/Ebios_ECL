@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Ebios.Application.DTOs;
 using Ebios.Application.Interfaces;
 using Ebios.Domain.Entities;
@@ -10,11 +11,16 @@ namespace Ebios.Infrastructure.Services;
 public class RosterService : IRosterService
 {
     private readonly AppDbContext _context;
+    private readonly IAuditService _auditService;
     private readonly ILogger<RosterService> _logger;
 
-    public RosterService(AppDbContext context, ILogger<RosterService> logger)
+    public RosterService(
+        AppDbContext context, 
+        IAuditService auditService,
+        ILogger<RosterService> logger)
     {
         _context = context;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -57,7 +63,13 @@ public class RosterService : IRosterService
             .ToListAsync();
     }
 
-    public async Task<bool> AssignShiftAsync(AssignRosterDto dto)
+    public async Task<bool> AssignShiftAsync(
+        AssignRosterDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null,
+        bool skipAudit = false)
     {
         if (string.IsNullOrWhiteSpace(dto.EmpCode) || string.IsNullOrWhiteSpace(dto.ShiftCode))
             return false;
@@ -75,8 +87,17 @@ public class RosterService : IRosterService
         var existing = await _context.EmployeeShiftRosters
             .FirstOrDefaultAsync(r => r.EmpCode.ToUpper() == cleanCode && r.RosterDate == targetDate);
 
+        string? oldStateJson = null;
         if (existing != null)
         {
+            oldStateJson = JsonSerializer.Serialize(new
+            {
+                EmpCode = cleanCode,
+                ShiftCode = existing.ShiftCode,
+                RosterDate = existing.RosterDate.ToString("yyyy-MM-dd"),
+                AssignedBy = existing.AssignedBy
+            });
+
             existing.ShiftId = shift.Id;
             existing.ShiftCode = shift.ShiftCode;
             existing.AssignedBy = dto.AssignedBy;
@@ -165,19 +186,70 @@ public class RosterService : IRosterService
         }
 
         await _context.SaveChangesAsync();
+
+        if (!skipAudit)
+        {
+            var newStateJson = JsonSerializer.Serialize(new
+            {
+                EmpCode = cleanCode,
+                ShiftCode = shift.ShiftCode,
+                ShiftName = shift.ShiftName,
+                RosterDate = targetDate.ToString("yyyy-MM-dd"),
+                AssignedBy = dto.AssignedBy
+            });
+
+            await _auditService.LogSecurityActionAsync(
+                "ROSTER_ASSIGNED",
+                $"{cleanCode} ({shift.ShiftCode})",
+                $"Assigned {shift.ShiftCode} ({shift.ShiftName}) to worker {cleanCode} ({employee.FullName}) for {targetDate:yyyy-MM-dd}.",
+                performedByUserId,
+                performedByUsername ?? dto.AssignedBy ?? "System",
+                performedByOfficerName ?? dto.AssignedBy ?? "System",
+                performedByRole ?? "Officer",
+                oldStateJson,
+                newStateJson
+            );
+        }
+
         return true;
     }
 
-    public async Task<int> BulkAssignRosterAsync(List<AssignRosterDto> dtoList)
+    public async Task<int> BulkAssignRosterAsync(
+        List<AssignRosterDto> dtoList,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         if (dtoList == null || !dtoList.Any()) return 0;
 
         int count = 0;
         foreach (var item in dtoList)
         {
-            bool ok = await AssignShiftAsync(item);
+            bool ok = await AssignShiftAsync(item, performedByUserId, performedByUsername, performedByOfficerName, performedByRole, skipAudit: true);
             if (ok) count++;
         }
+
+        var batchSummary = new
+        {
+            TotalRows = dtoList.Count,
+            SuccessCount = count,
+            FailureCount = dtoList.Count - count,
+            DatesCovered = dtoList.Select(d => d.RosterDate.ToString("yyyy-MM-dd")).Distinct().Take(5).ToList()
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "BULK_ROSTER_IMPORTED",
+            $"Batch ({count}/{dtoList.Count} assigned)",
+            $"Bulk imported shift rosters: {count} worker schedules assigned successfully ({dtoList.Count - count} skipped).",
+            performedByUserId,
+            performedByUsername ?? "System",
+            performedByOfficerName ?? "Bulk System",
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(batchSummary)
+        );
+
         return count;
     }
 

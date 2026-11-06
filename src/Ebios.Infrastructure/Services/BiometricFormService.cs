@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using Ebios.Application.DTOs;
 using Ebios.Application.Interfaces;
 using Ebios.Domain.Entities;
@@ -13,16 +14,19 @@ public class BiometricFormService : IBiometricFormService
 {
     private readonly AppDbContext _context;
     private readonly IEbiosSoapService _ebiosSoapService;
+    private readonly IAuditService _auditService;
     private readonly ILogger<BiometricFormService> _logger;
     private readonly string _storageBasePath;
 
     public BiometricFormService(
         AppDbContext context,
         IEbiosSoapService ebiosSoapService,
+        IAuditService auditService,
         ILogger<BiometricFormService> logger)
     {
         _context = context;
         _ebiosSoapService = ebiosSoapService;
+        _auditService = auditService;
         _logger = logger;
 
         // Base directory: storage/biometric_forms under application root (handles running from root or web project)
@@ -98,13 +102,34 @@ public class BiometricFormService : IBiometricFormService
         return MapToDto(newForm);
     }
 
-    public async Task<BiometricFormDto> SaveFormAsync(BiometricFormDto dto, string updatedBy)
+    public async Task<BiometricFormDto> SaveFormAsync(
+        BiometricFormDto dto, 
+        string updatedBy,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var cleanCode = dto.EmpCode?.Trim() ?? string.Empty;
         var entity = await _context.EmployeeBiometricForms
             .FirstOrDefaultAsync(f => f.EmpCode.ToLower() == cleanCode.ToLower());
 
-        if (entity == null)
+        string? oldStateJson = null;
+        if (entity != null)
+        {
+            oldStateJson = JsonSerializer.Serialize(new
+            {
+                EmpCode = entity.EmpCode,
+                EmployeeName = entity.EmployeeName,
+                AadhaarNumber = entity.AadhaarNumber,
+                Category = entity.Category,
+                PositionDesignation = entity.PositionDesignation,
+                DepartmentUnit = entity.DepartmentUnit,
+                PlaceOfPosting = entity.PlaceOfPosting,
+                IsCompleted = entity.IsCompleted
+            });
+        }
+        else
         {
             entity = new EmployeeBiometricForm
             {
@@ -289,10 +314,45 @@ public class BiometricFormService : IBiometricFormService
         entity.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+
+        var newStateJson = JsonSerializer.Serialize(new
+        {
+            EmpCode = entity.EmpCode,
+            EmployeeName = entity.EmployeeName,
+            AadhaarNumber = entity.AadhaarNumber,
+            Category = entity.Category,
+            PositionDesignation = entity.PositionDesignation,
+            DepartmentUnit = entity.DepartmentUnit,
+            PlaceOfPosting = entity.PlaceOfPosting,
+            IsCompleted = entity.IsCompleted
+        });
+
+        await _auditService.LogSecurityActionAsync(
+            "BIOMETRIC_FORM_SAVED",
+            $"{entity.EmpCode} ({entity.EmployeeName})",
+            $"Saved biometric registration form for {entity.EmpCode} ({entity.EmployeeName}), Unit: {entity.DepartmentUnit}.",
+            performedByUserId,
+            performedByUsername ?? updatedBy,
+            performedByOfficerName ?? updatedBy,
+            performedByRole ?? "Officer",
+            oldStateJson,
+            newStateJson
+        );
+
         return MapToDto(entity);
     }
 
-    public async Task<string> UploadPhotoAsync(string empCode, string boxType, Stream fileStream, string fileName, string updatedBy)
+    public async Task<string> UploadPhotoAsync(
+        string empCode, 
+        string boxType, 
+        Stream fileStream, 
+        string fileName, 
+        string updatedBy,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null,
+        bool skipAudit = false)
     {
         var safeEmpCode = SanitizeEmpCode(empCode);
         var normalizedBox = NormalizeBoxType(boxType);
@@ -348,10 +408,42 @@ public class BiometricFormService : IBiometricFormService
         await _context.SaveChangesAsync();
         _logger.LogInformation("Saved photo {BoxType} for employee {EmpCode} to {Path}", normalizedBox, safeEmpCode, relativePath);
 
+        if (!skipAudit)
+        {
+            var newStateJson = JsonSerializer.Serialize(new
+            {
+                EmpCode = safeEmpCode,
+                BoxType = normalizedBox,
+                FileName = Path.GetFileName(fileName),
+                StoragePath = relativePath
+            });
+
+            await _auditService.LogSecurityActionAsync(
+                "BIOMETRIC_PHOTO_UPLOADED",
+                $"{safeEmpCode} ({normalizedBox})",
+                $"Uploaded biometric photograph ({normalizedBox}) for worker {safeEmpCode}.",
+                performedByUserId,
+                performedByUsername ?? updatedBy,
+                performedByOfficerName ?? updatedBy,
+                performedByRole ?? "Officer",
+                null,
+                newStateJson
+            );
+        }
+
         return relativePath;
     }
 
-    public async Task<string> UploadSignedPhysicalFormAsync(string empCode, Stream fileStream, string fileName, string updatedBy)
+    public async Task<string> UploadSignedPhysicalFormAsync(
+        string empCode, 
+        Stream fileStream, 
+        string fileName, 
+        string updatedBy,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null,
+        bool skipAudit = false)
     {
         var safeEmpCode = SanitizeEmpCode(empCode);
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
@@ -389,10 +481,38 @@ public class BiometricFormService : IBiometricFormService
         await _context.SaveChangesAsync();
         _logger.LogInformation("Saved physical signed form for employee {EmpCode} to {Path}", safeEmpCode, relativePath);
 
+        if (!skipAudit)
+        {
+            var newStateJson = JsonSerializer.Serialize(new
+            {
+                EmpCode = safeEmpCode,
+                FileName = Path.GetFileName(fileName),
+                StoragePath = relativePath
+            });
+
+            await _auditService.LogSecurityActionAsync(
+                "SIGNED_FORM_UPLOADED",
+                safeEmpCode,
+                $"Uploaded scanned signed biometric form ({Path.GetFileName(fileName)}) for worker {safeEmpCode}.",
+                performedByUserId,
+                performedByUsername ?? updatedBy,
+                performedByOfficerName ?? updatedBy,
+                performedByRole ?? "Officer",
+                null,
+                newStateJson
+            );
+        }
+
         return relativePath;
     }
 
-    public async Task<BulkBiometricImportResult> ImportBulkCsvAsync(Stream csvStream, string updatedBy)
+    public async Task<BulkBiometricImportResult> ImportBulkCsvAsync(
+        Stream csvStream, 
+        string updatedBy,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var result = new BulkBiometricImportResult();
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
@@ -624,10 +744,37 @@ public class BiometricFormService : IBiometricFormService
 
         await _context.SaveChangesAsync();
         result.SuccessSummaries.Add($"Successfully imported/updated particulars and synced worker records for {result.SuccessCount} forms.");
+
+        var csvBatchSummary = new
+        {
+            Mode = "CSV Particulars",
+            TotalProcessed = result.TotalProcessed,
+            SuccessCount = result.SuccessCount,
+            FailureCount = result.FailureCount
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "BULK_BIOMETRIC_IMPORTED",
+            $"CSV Batch ({result.SuccessCount}/{result.TotalProcessed} forms)",
+            $"Bulk imported biometric form particulars: {result.SuccessCount} forms imported/updated successfully ({result.FailureCount} failures).",
+            performedByUserId,
+            performedByUsername ?? updatedBy,
+            performedByOfficerName ?? updatedBy,
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(csvBatchSummary)
+        );
+
         return result;
     }
 
-    public async Task<BulkBiometricImportResult> ImportBulkZipAsync(Stream zipStream, string updatedBy)
+    public async Task<BulkBiometricImportResult> ImportBulkZipAsync(
+        Stream zipStream, 
+        string updatedBy,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var result = new BulkBiometricImportResult();
         var updatedEmployees = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -722,11 +869,11 @@ public class BiometricFormService : IBiometricFormService
                         using var entryStream = entry.Open();
                         if (isSignedHardcopy)
                         {
-                            await UploadSignedPhysicalFormAsync(safeEmpCode, entryStream, fileName, updatedBy);
+                            await UploadSignedPhysicalFormAsync(safeEmpCode, entryStream, fileName, updatedBy, performedByUserId, performedByUsername, performedByOfficerName, performedByRole, skipAudit: true);
                         }
                         else if (boxType != null)
                         {
-                            await UploadPhotoAsync(safeEmpCode, boxType, entryStream, fileName, updatedBy);
+                            await UploadPhotoAsync(safeEmpCode, boxType, entryStream, fileName, updatedBy, performedByUserId, performedByUsername, performedByOfficerName, performedByRole, skipAudit: true);
                         }
 
                         updatedEmployees.Add(safeEmpCode);
@@ -749,6 +896,28 @@ public class BiometricFormService : IBiometricFormService
         }
 
         result.SuccessSummaries.Add($"Successfully imported {result.SuccessCount} photos across {updatedEmployees.Count} worker profiles.");
+
+        var zipBatchSummary = new
+        {
+            Mode = "ZIP Photos",
+            TotalProcessed = result.TotalProcessed,
+            SuccessCount = result.SuccessCount,
+            WorkerCount = updatedEmployees.Count,
+            FailureCount = result.FailureCount
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "BULK_BIOMETRIC_IMPORTED",
+            $"ZIP Batch ({result.SuccessCount} photos across {updatedEmployees.Count} workers)",
+            $"Bulk imported biometric photos: {result.SuccessCount} photos processed for {updatedEmployees.Count} workers ({result.FailureCount} skipped).",
+            performedByUserId,
+            performedByUsername ?? updatedBy,
+            performedByOfficerName ?? updatedBy,
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(zipBatchSummary)
+        );
+
         return result;
     }
 

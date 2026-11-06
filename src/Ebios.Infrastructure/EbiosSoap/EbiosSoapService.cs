@@ -20,9 +20,15 @@ public class EbiosSoapService : IEbiosSoapService
         _httpClient = httpClient;
         _logger = logger;
 
-        _endpointUrl = configuration["EbiosServer:Url"] ?? string.Empty;
-        _userName = configuration["EbiosServer:UserName"] ?? string.Empty;
-        _password = configuration["EbiosServer:Password"] ?? string.Empty;
+        _endpointUrl = Environment.GetEnvironmentVariable("EBIOS_URL") 
+                       ?? configuration["EbiosServer:Url"] 
+                       ?? string.Empty;
+        _userName = Environment.GetEnvironmentVariable("EBIOS_USERNAME") 
+                    ?? configuration["EbiosServer:UserName"] 
+                    ?? string.Empty;
+        _password = Environment.GetEnvironmentVariable("EBIOS_PASSWORD") 
+                    ?? configuration["EbiosServer:Password"] 
+                    ?? string.Empty;
     }
 
     public async Task<(bool success, string message)> UpdateLocationAsync(string locationCode, string locationDescription)
@@ -124,6 +130,11 @@ public class EbiosSoapService : IEbiosSoapService
 
     private async Task<(bool success, string message)> SendSoapRequestAsync(string soapAction, string xmlPayload, string resultElementName)
     {
+        if (string.IsNullOrWhiteSpace(_endpointUrl))
+        {
+            return (false, "Central Biometric Server is not configured.");
+        }
+
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, _endpointUrl);
@@ -136,12 +147,36 @@ public class EbiosSoapService : IEbiosSoapService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("eBios SOAP error: HTTP {Status} - {Response}", response.StatusCode, responseXml);
-                return (false, $"HTTP Error {response.StatusCode}");
+                return (false, "Central Biometric Server returned an unexpected error.");
             }
 
             var xdoc = XDocument.Parse(responseXml);
             var resultNode = xdoc.Descendants().FirstOrDefault(e => e.Name.LocalName == resultElementName);
-            string resultText = resultNode?.Value ?? "No result element found in response";
+            string resultText = resultNode?.Value ?? string.Empty;
+
+            _logger.LogInformation("eBios SOAP response for {Action}: {Result}", resultElementName, string.IsNullOrWhiteSpace(resultText) ? responseXml : resultText);
+
+            if (resultElementName == "DeviceCommand_BlockUnBlockUserResult")
+            {
+                // Official eBioServer specification:
+                // "Result will be displayed error if any input values are invalid else command will be executed"
+                bool isError = resultText.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                               resultText.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+
+                if (isError)
+                {
+                    _logger.LogWarning("DeviceCommand_BlockUnBlockUser rejected: {Result}", resultText);
+                    return (false, "Device command rejected by Biometric Server: invalid device serial or worker code.");
+                }
+
+                if (resultNode != null)
+                {
+                    _logger.LogInformation("DeviceCommand_BlockUnBlockUser executed successfully: {Result}", resultText);
+                    return (true, string.IsNullOrWhiteSpace(resultText) ? "Command executed successfully on biometric device." : resultText);
+                }
+
+                return (false, "Biometric server did not return a valid command confirmation.");
+            }
 
             bool isSuccess = resultText.Contains("Success", StringComparison.OrdinalIgnoreCase) || 
                              resultText.Contains("Saved", StringComparison.OrdinalIgnoreCase) ||
@@ -149,10 +184,20 @@ public class EbiosSoapService : IEbiosSoapService
 
             return (isSuccess, resultText);
         }
+        catch (TaskCanceledException)
+        {
+            _logger.LogError("eBios SOAP request timed out connecting to {Url}", _endpointUrl);
+            return (false, "Central Biometric Server request timed out. Please check network/VPN connection.");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "HTTP connection error while reaching eBioServer at {Url}", _endpointUrl);
+            return (false, "Cannot connect to Central Biometric Server. Server is unreachable or offline.");
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to call eBios SOAP API");
-            return (false, ex.Message);
+            _logger.LogError(ex, "Failed to call eBios SOAP API at {Url}", _endpointUrl);
+            return (false, "Biometric server communication error.");
         }
     }
 }

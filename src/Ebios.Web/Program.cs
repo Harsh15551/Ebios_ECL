@@ -26,6 +26,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHttpClient<IEbiosSoapService, EbiosSoapService>();
 
 // 3. Register Application Services (Dependency Injection)
+builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IAreaService, AreaService>();
 builder.Services.AddScoped<IUserService, UserService>();

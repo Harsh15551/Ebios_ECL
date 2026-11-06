@@ -567,8 +567,13 @@ else
         try
         {
             var dto = new CreateSubAreaDto(newSubAreaCode.Trim().ToUpperInvariant(), newSubAreaName.Trim(), newAreaId);
-            var result = await AreaService.CreateSubAreaAsync(dto);
-            successMessage = $"Colliery Unit '{result.SubAreaName}' ({result.SubAreaCode}) created successfully. eBios sync: {(result.IsSyncedToEbios ? "Synced" : "Pending")}.";
+            var result = await AreaService.CreateSubAreaAsync(
+                dto,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
+            successMessage = $"Colliery Unit '{result.SubAreaName}' ({result.SubAreaCode}) created successfully. Biometric sync: {(result.IsSyncedToEbios ? "Synced" : "Pending")}.";
             showCreateModal = false;
             await LoadSubAreasInternalAsync();
         }
@@ -603,10 +608,16 @@ else
         try
         {
             var dto = new CreateSubAreaDto(editingSubArea.SubAreaCode, editSubAreaName.Trim(), editAreaId);
-            var ok = await AreaService.UpdateSubAreaAsync(editingSubArea.Id, dto);
+            var ok = await AreaService.UpdateSubAreaAsync(
+                editingSubArea.Id, 
+                dto,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             if (ok)
             {
-                successMessage = $"Colliery Unit '{editingSubArea.SubAreaCode}' updated successfully and synced to eBios.";
+                successMessage = $"Colliery Unit '{editingSubArea.SubAreaCode}' updated successfully and synced to biometric server.";
                 showEditModal = false;
                 editingSubArea = null;
                 await LoadSubAreasInternalAsync();
@@ -636,7 +647,7 @@ else
 
             if (updated)
             {
-                successMessage = $"Triggered eBios SOAP sync for unit {sub.SubAreaCode}.";
+                successMessage = $"Triggered biometric synchronization for unit {sub.SubAreaCode}.";
                 await LoadSubAreasInternalAsync();
             }
             else
@@ -646,7 +657,7 @@ else
         }
         catch (Exception ex)
         {
-            errorMessage = $"Error during SOAP sync for {sub.SubAreaCode}: {ex.Message}";
+            errorMessage = $"Error during biometric sync for {sub.SubAreaCode}: {ex.Message}";
         }
         finally
         {

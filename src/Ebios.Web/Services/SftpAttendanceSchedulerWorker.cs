@@ -53,7 +53,15 @@ public class SftpAttendanceSchedulerWorker : BackgroundService
                         using var scope = _serviceProvider.CreateScope();
                         var sftpService = scope.ServiceProvider.GetRequiredService<ISftpAttendanceService>();
 
-                        var result = await sftpService.ExportAndUploadDailyAttendanceAsync(now.Date);
+                        var result = await sftpService.ExportAndUploadDailyAttendanceAsync(
+                            now.Date,
+                            areaId: null,
+                            subAreaId: null,
+                            triggerType: "SCHEDULED_AUTO",
+                            userId: null,
+                            username: "system_scheduler",
+                            officerName: "Automated Nightly Worker",
+                            role: "System");
                         if (result.Success)
                         {
                             _lastExecutedDate = now.Date;

@@ -2,20 +2,39 @@
 @rendermode InteractiveServer
 @inject IDeviceService DeviceService
 @inject IAreaService AreaService
+@inject UserSessionService UserSession
 
 <PageTitle>ECL - Biometric Devices Setup</PageTitle>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h2 class="h3 fw-bold mb-1">Biometric Attendance Terminals</h2>
-        <p class="text-muted mb-0">Hardware setup & terminal registration for face recognition and fingerprint readers across colliery gates</p>
+        <div class="d-flex align-items-center gap-2">
+            <h2 class="h3 fw-bold mb-1">Biometric Attendance Terminals</h2>
+            @if (!UserSession.IsSuperAdmin)
+            {
+                <span class="badge bg-warning text-dark"><i class="bi bi-eye"></i> View-Only Access (@(UserSession.CurrentUser?.AreaName ?? UserSession.CurrentUser?.SubAreaName ?? "Assigned Scope"))</span>
+            }
+        </div>
+        <p class="text-muted mb-0">
+            @if (!UserSession.IsSuperAdmin)
+            {
+                <span class="text-danger fw-semibold">View-Only Scope: Terminal hardware registration and pairing are managed by ECL Central Admin.</span>
+            }
+            else
+            {
+                <span>Hardware setup & terminal registration for face recognition and fingerprint readers across colliery gates</span>
+            }
+        </p>
     </div>
-    <button class="btn btn-primary" @onclick="OpenCreateModal">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
-            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-        </svg>
-        Register Biometric Device
-    </button>
+    @if (UserSession.IsSuperAdmin)
+    {
+        <button class="btn btn-primary" @onclick="OpenCreateModal">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+            </svg>
+            Register Biometric Device
+        </button>
+    }
 </div>
 
 @if (!string.IsNullOrEmpty(successMessage))
@@ -50,8 +69,11 @@
             </div>
 
             <div class="col-12 col-md-4">
-                <select class="form-select" @bind="subAreaFilter">
-                    <option value="0">All Colliery Units (@subAreas.Count Units)</option>
+                <select class="form-select" @bind="subAreaFilter" disabled="@UserSession.IsUnitAdmin">
+                    @if (!UserSession.IsUnitAdmin)
+                    {
+                        <option value="0">All Colliery Units (@subAreas.Count Units)</option>
+                    }
                     @foreach (var sub in subAreas)
                     {
                         <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode)</option>
@@ -156,14 +178,26 @@ else
                                     }
                                 </td>
                                 <td class="text-end">
-                                    <button class="btn btn-sm btn-outline-warning me-1" @onclick="@(() => OpenActivateModal(dev))" title="Activate terminal with eBios">
-                                        ⚡ Activate
-                                    </button>
-                                    @if (!dev.IsSyncedToEbios)
+                                    @if (UserSession.IsSuperAdmin)
                                     {
-                                        <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncDeviceAsync(dev))" title="Retry push terminal to eBios">
-                                            Retry Sync
+                                        <button class="btn btn-sm btn-outline-primary me-1" @onclick="@(() => OpenEditModal(dev))" title="Edit terminal configuration">
+                                            <i class="bi bi-pencil-square"></i> Edit
                                         </button>
+                                        <button class="btn btn-sm btn-outline-warning me-1" @onclick="@(() => OpenActivateModal(dev))" title="Activate terminal with eBios">
+                                            ⚡ Activate
+                                        </button>
+                                        @if (!dev.IsSyncedToEbios)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncDeviceAsync(dev))" title="Retry push terminal to eBios">
+                                                Retry Sync
+                                            </button>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-light text-muted border py-1 px-2">
+                                            <i class="bi bi-lock-fill me-1"></i> View Only
+                                        </span>
                                     }
                                 </td>
                             </tr>
@@ -305,6 +339,89 @@ else
     </div>
 }
 
+<!-- Edit Device Modal -->
+@if (showEditModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">✏️ Edit Biometric Attendance Terminal</h5>
+                    <button type="button" class="btn-close" @onclick="CloseEditModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(editModalError))
+                    {
+                        <div class="alert alert-danger py-2 small">@editModalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-muted small">Hardware Serial Number</label>
+                        <div class="p-2 bg-light rounded border font-monospace fw-bold text-dark">
+                            @editDeviceSerial
+                        </div>
+                        <small class="text-muted">Unique hardware identifier linked to physical terminal (read-only).</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Colliery Unit / Sub-Area <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="editSubAreaId">
+                            <option value="0">-- Select Colliery Unit --</option>
+                            @foreach (var sub in subAreas)
+                            {
+                                <option value="@sub.Id">@sub.SubAreaName (@sub.SubAreaCode) - @sub.AreaName</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Device Terminal Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" placeholder="e.g. Pit 1 Incline Main Turnstile" @bind="editDeviceName" />
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Gate Direction <span class="text-danger">*</span></label>
+                            <select class="form-select" @bind="editDirection">
+                                <option value="INOUT">INOUT (Bi-directional)</option>
+                                <option value="IN">IN (Shift Entry)</option>
+                                <option value="OUT">OUT (Shift Exit)</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Hardware Type</label>
+                            <select class="form-select" @bind="editDeviceType">
+                                <option value="AI">AI (Face Recognition Reader)</option>
+                                <option value="Non AI">Non AI (Fingerprint / Turnstile)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Device Activation Code</label>
+                        <input type="text" class="form-control font-monospace" placeholder="Enter activation code (default: 0)" @bind="editActivationCode" />
+                        <small class="text-muted">Device activation code configured on eBioServer.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CloseEditModal" disabled="@isUpdating">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SubmitUpdateDeviceAsync" disabled="@isUpdating">
+                        @if (isUpdating)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Saving Changes...</span>
+                        }
+                        else
+                        {
+                            <span>Save Changes</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private List<DeviceDto> devices = new();
     private List<SubAreaDto> subAreas = new();
@@ -339,6 +456,18 @@ else
     private string activateDeviceName = string.Empty;
     private string activateCode = "0";
 
+    // Modal state: Edit Terminal
+    private bool showEditModal = false;
+    private bool isUpdating = false;
+    private string? editModalError;
+    private int editDeviceId;
+    private string editDeviceSerial = string.Empty;
+    private string editDeviceName = string.Empty;
+    private int editSubAreaId;
+    private string editDirection = "INOUT";
+    private string editDeviceType = "AI";
+    private string editActivationCode = "0";
+
     protected override async Task OnInitializedAsync()
     {
         await LoadDataAsync();
@@ -349,8 +478,17 @@ else
         isLoading = true;
         try
         {
-            devices = await DeviceService.GetDevicesAsync();
-            subAreas = await AreaService.GetSubAreasAsync();
+            devices = await DeviceService.GetDevicesAsync(UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
+            var subs = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
+            if (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
+            {
+                subAreas = subs.Where(s => s.Id == UserSession.CurrentSubAreaId.Value).ToList();
+                subAreaFilter = UserSession.CurrentSubAreaId.Value;
+            }
+            else
+            {
+                subAreas = subs;
+            }
         }
         catch (Exception ex)
         {
@@ -395,8 +533,8 @@ else
         newSubAreaId = subAreas.FirstOrDefault()?.Id ?? 0;
         newSerial = string.Empty;
         newName = string.Empty;
-        newDirection = "in";
-        newDeviceType = "Biometric Face/Thumb";
+        newDirection = "IN";
+        newDeviceType = "AI";
         newActivationCode = "0";
         modalError = null;
         showCreateModal = true;
@@ -424,13 +562,89 @@ else
         activateModalError = null;
     }
 
+    private void OpenEditModal(DeviceDto dev)
+    {
+        editDeviceId = dev.Id;
+        editDeviceSerial = dev.SerialNumber;
+        editDeviceName = dev.DeviceName;
+        editSubAreaId = dev.SubAreaId;
+        editDirection = string.IsNullOrWhiteSpace(dev.Direction) ? "INOUT" : dev.Direction.ToUpperInvariant();
+        editDeviceType = string.IsNullOrWhiteSpace(dev.DeviceType) ? "AI" : dev.DeviceType;
+        editActivationCode = string.IsNullOrWhiteSpace(dev.ActivationCode) ? "0" : dev.ActivationCode;
+        editModalError = null;
+        showEditModal = true;
+    }
+
+    private void CloseEditModal()
+    {
+        showEditModal = false;
+        editModalError = null;
+    }
+
+    private async Task SubmitUpdateDeviceAsync()
+    {
+        editModalError = null;
+
+        if (editSubAreaId <= 0)
+        {
+            editModalError = "Please select a Colliery Unit.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(editDeviceName))
+        {
+            editModalError = "Device Terminal Name is required.";
+            return;
+        }
+
+        isUpdating = true;
+        try
+        {
+            var dto = new UpdateDeviceDto(
+                editDeviceName.Trim(),
+                editDirection,
+                editDeviceType,
+                string.IsNullOrWhiteSpace(editActivationCode) ? "0" : editActivationCode.Trim(),
+                editSubAreaId
+            );
+
+            var result = await DeviceService.UpdateDeviceAsync(
+                editDeviceId,
+                dto,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString()
+            );
+
+            successMessage = $"Device '{result.DeviceName}' ({result.SerialNumber}) updated successfully and synchronized with eBioServer.";
+            showEditModal = false;
+            devices = await DeviceService.GetDevicesAsync();
+        }
+        catch (Exception ex)
+        {
+            editModalError = ex.Message;
+        }
+        finally
+        {
+            isUpdating = false;
+        }
+    }
+
     private async Task SubmitActivationAsync()
     {
         activateModalError = null;
         isActivating = true;
         try
         {
-            var (success, msg) = await DeviceService.ActivateDeviceAsync(activateDeviceId, activateCode);
+            var (success, msg) = await DeviceService.ActivateDeviceAsync(
+                activateDeviceId, 
+                activateCode,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString()
+            );
             if (success)
             {
                 successMessage = msg;
@@ -478,7 +692,13 @@ else
         try
         {
             var dto = new CreateDeviceDto(newSerial.Trim().ToUpperInvariant(), newName.Trim(), newDirection, newDeviceType, string.IsNullOrWhiteSpace(newActivationCode) ? "0" : newActivationCode.Trim(), newSubAreaId);
-            var result = await DeviceService.CreateDeviceAsync(dto);
+            var result = await DeviceService.CreateDeviceAsync(
+                dto,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString()
+            );
             successMessage = $"Device '{result.DeviceName}' ({result.SerialNumber}) registered successfully. Biometric sync: {(result.IsSyncedToEbios ? "Synced" : "Queued")}.";
             showCreateModal = false;
             devices = await DeviceService.GetDevicesAsync();
@@ -497,7 +717,7 @@ else
     {
         try
         {
-            var synced = await DeviceService.SyncDeviceAsync(dev.Id);
+            var (synced, msg) = await DeviceService.SyncDeviceAsync(dev.Id);
             if (synced)
             {
                 successMessage = $"Device {dev.SerialNumber} synchronized to biometric system.";
@@ -505,7 +725,7 @@ else
             }
             else
             {
-                errorMessage = $"Failed to synchronize device {dev.SerialNumber}.";
+                errorMessage = $"Failed to synchronize device {dev.SerialNumber}: {msg}";
             }
         }
         catch (Exception ex)

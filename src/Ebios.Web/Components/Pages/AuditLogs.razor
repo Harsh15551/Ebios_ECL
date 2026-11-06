@@ -1,0 +1,483 @@
+@page "/audit-logs"
+@rendermode InteractiveServer
+@using Ebios.Application.Common
+@inject IAuditService AuditService
+@inject UserSessionService UserSession
+@inject NavigationManager Navigation
+
+<PageTitle>ECL - System Audit Trail &amp; Compliance Logs</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h2 class="h3 fw-bold mb-1">
+                <i class="bi bi-shield-check text-primary me-2"></i>System Audit Trail
+            </h2>
+            @if (UserSession.IsSuperAdmin)
+            {
+                <span class="badge bg-danger">ECL HQ Global Scope</span>
+            }
+            else if (UserSession.IsAreaAdmin)
+            {
+                <span class="badge bg-primary">@(UserSession.CurrentUser?.AreaName) Area Scope</span>
+            }
+            else
+            {
+                <span class="badge bg-info text-dark">@(UserSession.CurrentUser?.SubAreaName) Unit Scope</span>
+            }
+        </div>
+        <p class="text-muted small mb-0">
+            Immutable tracking for attendance modifications, bulk regularizations, SFTP transmissions, and security actions.
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadAuditLogsAsync" disabled="@isLoading">
+            <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+        </button>
+    </div>
+</div>
+
+<!-- Filters Bar -->
+<div class="card shadow-sm border-0 mb-4 bg-light">
+    <div class="card-body p-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label small fw-semibold text-muted mb-1">Category</label>
+                <select class="form-select form-select-sm" @bind="selectedCategory" @bind:after="ApplyFilterAsync">
+                    <option value="ALL">All Categories</option>
+                    <option value="Regularization">Attendance Regularization</option>
+                    <option value="SftpDispatch">SFTP Report Dispatch</option>
+                    <option value="Security">Security &amp; 2FA</option>
+                </select>
+            </div>
+
+            <div class="col-12 col-md-2">
+                <label class="form-label small fw-semibold text-muted mb-1">Status</label>
+                <select class="form-select form-select-sm" @bind="selectedStatus" @bind:after="ApplyFilterAsync">
+                    <option value="ALL">All Statuses</option>
+                    <option value="SUCCESS">Success / Verified</option>
+                    <option value="FAILED">Failed</option>
+                </select>
+            </div>
+
+            <div class="col-12 col-md-2">
+                <label class="form-label small fw-semibold text-muted mb-1">From Date</label>
+                <input type="date" class="form-control form-control-sm" @bind="fromDate" @bind:after="ApplyFilterAsync" />
+            </div>
+
+            <div class="col-12 col-md-2">
+                <label class="form-label small fw-semibold text-muted mb-1">To Date</label>
+                <input type="date" class="form-control form-control-sm" @bind="toDate" @bind:after="ApplyFilterAsync" />
+            </div>
+
+            <div class="col-12 col-md-3">
+                <label class="form-label small fw-semibold text-muted mb-1">Search Keywords</label>
+                <div class="input-group input-group-sm">
+                    <input type="text" class="form-control" placeholder="EmpCode, File, Officer..." @bind="searchText" @bind:event="oninput" @onkeydown="HandleSearchKeyDown" />
+                    <button class="btn btn-primary" type="button" @onclick="ApplyFilterAsync">
+                        <i class="bi bi-search"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Audit Table -->
+<div class="card shadow-sm border-0">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-dark small text-uppercase">
+                <tr>
+                    <th style="width: 170px;">Timestamp (IST)</th>
+                    <th style="width: 140px;">Category</th>
+                    <th style="width: 220px;">Action</th>
+                    <th style="width: 220px;">Reference Target</th>
+                    <th>Audit Summary &amp; Details</th>
+                    <th style="width: 170px;">Officer / Actor</th>
+                    <th style="width: 100px;" class="text-center">Status</th>
+                    <th style="width: 80px;" class="text-center">Diff</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (isLoading)
+                {
+                    <tr>
+                        <td colspan="8" class="text-center py-5">
+                            <div class="spinner-border text-primary spinner-border-sm me-2" role="status"></div>
+                            <span class="text-muted small">Loading immutable audit logs...</span>
+                        </td>
+                    </tr>
+                }
+                else if (auditLogs == null || auditLogs.Count == 0)
+                {
+                    <tr>
+                        <td colspan="8" class="text-center py-5 text-muted">
+                            <i class="bi bi-folder-x fs-2 d-block mb-2 text-secondary"></i>
+                            No audit trail events found matching the selected filters.
+                        </td>
+                    </tr>
+                }
+                else
+                {
+                    @foreach (var log in auditLogs)
+                    {
+                        <tr>
+                            <td class="font-monospace small text-nowrap">
+                                @log.Timestamp.ToLocalTime().ToString("dd-MM-yyyy HH:mm:ss")
+                            </td>
+                            <td>
+                                @if (log.Category == "Regularization")
+                                {
+                                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                                        <i class="bi bi-pencil-square me-1"></i> Regularization
+                                    </span>
+                                }
+                                else if (log.Category == "SftpDispatch")
+                                {
+                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
+                                        <i class="bi bi-cloud-arrow-up me-1"></i> SFTP Sync
+                                    </span>
+                                }
+                                else if (log.Category == "Security")
+                                {
+                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                        <i class="bi bi-shield-lock me-1"></i> Security
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-secondary-subtle text-secondary border">@log.Category</span>
+                                }
+                            </td>
+                            <td>
+                                <strong class="small font-monospace">@FormatAction(log.Action)</strong>
+                            </td>
+                            <td>
+                                <span class="badge bg-light text-dark border font-monospace text-truncate d-inline-block" style="max-width: 210px;" title="@log.EntityReference">
+                                    @log.EntityReference
+                                </span>
+                            </td>
+                            <td class="small text-secondary">
+                                @log.Details
+                            </td>
+                            <td>
+                                <div class="small fw-semibold text-dark">@(string.IsNullOrWhiteSpace(log.OfficerName) ? log.Username : log.OfficerName)</div>
+                                <div class="text-muted" style="font-size: 0.75rem;">@log.Role</div>
+                            </td>
+                            <td class="text-center">
+                                @if (log.Status == "SUCCESS" || log.Status == "DELIVERED_VERIFIED")
+                                {
+                                    <span class="badge bg-success">Success</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-danger">Failed</span>
+                                }
+                            </td>
+                            <td class="text-center">
+                                @if (!string.IsNullOrEmpty(log.PreviousStateJson) || !string.IsNullOrEmpty(log.NewStateJson))
+                                {
+                                    <button class="btn btn-sm btn-outline-primary py-0 px-2" @onclick="@(() => OpenDiffModal(log))" title="View Before &amp; After Snapshot">
+                                        <i class="bi bi-code-slash"></i>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <span class="text-muted small">—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    @if (totalCount > pageSize)
+    {
+        <div class="card-footer bg-light d-flex justify-content-between align-items-center py-2">
+            <span class="small text-muted">
+                Showing <strong>@(((currentPage - 1) * pageSize) + 1)</strong> to <strong>@(Math.Min(currentPage * pageSize, totalCount))</strong> of <strong>@totalCount</strong> events
+            </span>
+            <div class="d-flex gap-1">
+                <button class="btn btn-outline-secondary btn-sm" disabled="@(currentPage <= 1)" @onclick="PreviousPageAsync">
+                    &larr; Prev
+                </button>
+                <span class="btn btn-light btn-sm disabled">Page @currentPage of @totalPages</span>
+                <button class="btn btn-outline-secondary btn-sm" disabled="@(currentPage >= totalPages)" @onclick="NextPageAsync">
+                    Next &rarr;
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+<!-- ======================================================== -->
+<!-- MODAL: Before vs After Snapshot Comparison               -->
+<!-- ======================================================== -->
+@if (isDiffModalOpen && selectedDiffLog != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1060;">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white py-3">
+                    <h5 class="modal-title fs-6 fw-bold">
+                        <i class="bi bi-clock-history me-2 text-warning"></i>Audit Snapshot &bull; @selectedDiffLog.EntityReference
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseDiffModal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="alert alert-light border small mb-3">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Action:</strong> @selectedDiffLog.Action<br />
+                                <strong>Target:</strong> @selectedDiffLog.EntityReference
+                            </div>
+                            <div class="col-md-6 text-md-end">
+                                <strong>Officer:</strong> @selectedDiffLog.OfficerName (@selectedDiffLog.Role)<br />
+                                <strong>Timestamp:</strong> @selectedDiffLog.Timestamp.ToLocalTime().ToString("dd-MM-yyyy HH:mm:ss")
+                            </div>
+                        </div>
+                        <div class="mt-2 text-muted"><strong>Summary:</strong> @selectedDiffLog.Details</div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <div class="card h-100 border">
+                                <div class="card-header bg-light py-2 fw-semibold text-danger small">
+                                    <i class="bi bi-dash-circle me-1"></i> State BEFORE Modification
+                                </div>
+                                <div class="card-body p-0">
+                                    @{
+                                        var prevAttrs = AuditSnapshotFormatter.FormatAttributes(selectedDiffLog.PreviousStateJson);
+                                    }
+                                    @if (prevAttrs.Any())
+                                    {
+                                        <div class="table-responsive" style="max-height: 280px;">
+                                            <table class="table table-sm table-striped table-bordered mb-0 small">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th style="width: 45%;">Field</th>
+                                                        <th>Previous Value</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var attr in prevAttrs)
+                                                    {
+                                                        <tr>
+                                                            <td class="fw-semibold text-secondary">@attr.Label</td>
+                                                            <td class="text-dark">@attr.Value</td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted small mb-0 font-italic py-4 text-center">No previous state recorded (Initial creation or system event).</p>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <div class="card h-100 border">
+                                <div class="card-header bg-light py-2 fw-semibold text-success small">
+                                    <i class="bi bi-plus-circle me-1"></i> State AFTER Modification
+                                </div>
+                                <div class="card-body p-0">
+                                    @{
+                                        var newAttrs = AuditSnapshotFormatter.FormatAttributes(selectedDiffLog.NewStateJson);
+                                    }
+                                    @if (newAttrs.Any())
+                                    {
+                                        <div class="table-responsive" style="max-height: 280px;">
+                                            <table class="table table-sm table-striped table-bordered mb-0 small">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th style="width: 45%;">Field</th>
+                                                        <th>New Value</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var attr in newAttrs)
+                                                    {
+                                                        <tr>
+                                                            <td class="fw-semibold text-secondary">@attr.Label</td>
+                                                            <td class="text-dark">@attr.Value</td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted small mb-0 font-italic py-4 text-center">No payload recorded.</p>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light py-2">
+                    <button type="button" class="btn btn-secondary btn-sm" @onclick="CloseDiffModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AuditLogDto> auditLogs = new();
+    private bool isLoading = true;
+
+    private string selectedCategory = "ALL";
+    private string selectedStatus = "ALL";
+    private DateTime? fromDate;
+    private DateTime? toDate;
+    private string searchText = "";
+
+    private int currentPage = 1;
+    private int pageSize = 25;
+    private int totalCount = 0;
+    private int totalPages => (int)Math.Ceiling((double)totalCount / pageSize);
+
+    // Diff Modal State
+    private bool isDiffModalOpen = false;
+    private AuditLogDto? selectedDiffLog;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAuditLogsAsync();
+    }
+
+    private async Task LoadAuditLogsAsync()
+    {
+        isLoading = true;
+        try
+        {
+            string? effectiveSearch = searchText;
+            if (UserSession.IsUnitAdmin && string.IsNullOrWhiteSpace(effectiveSearch))
+            {
+                effectiveSearch = UserSession.CurrentUser?.SubAreaName ?? UserSession.CurrentUser?.Username;
+            }
+
+            var filter = new AuditFilterDto(
+                Category: selectedCategory,
+                Status: selectedStatus,
+                FromDate: fromDate,
+                ToDate: toDate,
+                SearchText: effectiveSearch,
+                Page: currentPage,
+                PageSize: pageSize
+            );
+
+            var paged = await AuditService.GetAuditLogsPagedAsync(filter);
+            auditLogs = paged.Items;
+            totalCount = paged.TotalCount;
+        }
+        catch
+        {
+            auditLogs = new();
+            totalCount = 0;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ApplyFilterAsync()
+    {
+        currentPage = 1;
+        await LoadAuditLogsAsync();
+    }
+
+    private async Task HandleSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await ApplyFilterAsync();
+        }
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (currentPage < totalPages)
+        {
+            currentPage++;
+            await LoadAuditLogsAsync();
+        }
+    }
+
+    private async Task PreviousPageAsync()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await LoadAuditLogsAsync();
+        }
+    }
+
+    private void OpenDiffModal(AuditLogDto log)
+    {
+        selectedDiffLog = log;
+        isDiffModalOpen = true;
+    }
+
+    private void CloseDiffModal()
+    {
+        isDiffModalOpen = false;
+        selectedDiffLog = null;
+    }
+
+    private static string FormatAction(string action)
+    {
+        return action switch
+        {
+            "REGULARIZATION_OVERWRITTEN" => "⚠️ Overwrite Regularization",
+            "REGULARIZATION_APPLIED" => "✏️ Apply Regularization",
+            "REGULARIZATION_REVERTED_TO_PUNCHES" => "🔄 Revert to Machine Punches",
+            "SFTP_DELIVERED_VERIFIED" => "✅ SFTP Delivered & Verified",
+            "SFTP_TRANSMISSION_FAILED" => "❌ SFTP Failed",
+            "2FA_ADMIN_RESET" => "🛡️ 2FA Admin Reset",
+            "SUPERADMIN_EMERGENCY_LOGIN" => "🚨 Admin Emergency Login",
+            "USER_CREATED" => "👤 User Created",
+            "USER_ACTIVATED" => "🟢 User Activated",
+            "USER_DEACTIVATED" => "🔴 User Deactivated",
+            "USER_PERMISSIONS_CHANGED" => "🔑 User Permissions Changed",
+            "EMPLOYEE_CATEGORY_CHANGED" => "👔 Executive Category Changed",
+            "WORKER_TRANSFER" => "🏢 Worker Unit Transfer",
+            "WORKER_ACCESS_BLOCKED" => "⛔ Worker Blocked",
+            "WORKER_ACCESS_UNBLOCKED" => "✅ Worker Unblocked",
+            "WORKER_DEVICE_BLOCKED" => "🚫 Turnstile Access Blocked",
+            "WORKER_DEVICE_UNBLOCKED" => "🟢 Turnstile Access Allowed",
+            "COLLIERY_UNIT_CREATED" => "🏢 Colliery Unit Created",
+            "COLLIERY_UNIT_UPDATED" => "✏️ Colliery Unit Updated",
+            "MINING_AREA_CREATED" => "⛏️ Mining Area Created",
+            "MINING_AREA_UPDATED" => "✏️ Mining Area Updated",
+            "WORKER_CREATED" => "👤 Worker Created",
+            "BULK_WORKERS_IMPORTED" => "👥 Bulk Workers Imported",
+            "BULK_WORKERS_BLACKLISTED" => "⛔ Bulk Workers Blacklisted",
+            "BULK_TURNSTILE_ACCESS_UPDATED" => "🚷 Bulk Turnstile Access Updated",
+            "DEVICE_REGISTERED" => "📟 Device Registered",
+            "DEVICE_UPDATED" => "✏️ Device Updated",
+            "DEVICE_ACTIVATED" => "🟢 Device Activated",
+            "DEVICE_STATUS_CHANGED" => "⚙️ Device Status Changed",
+            "SHIFT_CREATED" => "🕒 Shift Created",
+            "SHIFT_UPDATED" => "✏️ Shift Updated",
+            "SHIFT_DELETED" => "🗑️ Shift Deleted",
+            "ROSTER_ASSIGNED" => "📅 Shift Roster Assigned",
+            "BULK_ROSTER_IMPORTED" => "📋 Bulk Roster Imported",
+            "BIOMETRIC_FORM_SAVED" => "📝 Biometric Form Saved",
+            "BIOMETRIC_PHOTO_UPLOADED" => "📷 Biometric Photo Uploaded",
+            "SIGNED_FORM_UPLOADED" => "📄 Signed Physical Form Uploaded",
+            "BULK_BIOMETRIC_IMPORTED" => "📦 Bulk Biometric Forms Imported",
+            _ => action.Replace("_", " ")
+        };
+    }
+}

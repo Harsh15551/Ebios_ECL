@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Ebios.Application.DTOs;
 using Ebios.Application.Interfaces;
 using Ebios.Domain.Entities;
@@ -11,12 +12,18 @@ public class EmployeeService : IEmployeeService
 {
     private readonly AppDbContext _context;
     private readonly IEbiosSoapService _ebiosSoapService;
+    private readonly IAuditService _auditService;
     private readonly ILogger<EmployeeService> _logger;
 
-    public EmployeeService(AppDbContext context, IEbiosSoapService ebiosSoapService, ILogger<EmployeeService> logger)
+    public EmployeeService(
+        AppDbContext context, 
+        IEbiosSoapService ebiosSoapService, 
+        IAuditService auditService,
+        ILogger<EmployeeService> logger)
     {
         _context = context;
         _ebiosSoapService = ebiosSoapService;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -144,7 +151,12 @@ public class EmployeeService : IEmployeeService
         );
     }
 
-    public async Task<EmployeeDto> CreateEmployeeAsync(CreateEmployeeDto dto)
+    public async Task<EmployeeDto> CreateEmployeeAsync(
+        CreateEmployeeDto dto,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         string normalizedCode = dto.EmpCode.Trim().ToUpperInvariant();
         if (dto.SubAreaId <= 0)
@@ -192,6 +204,30 @@ public class EmployeeService : IEmployeeService
         }
 
         await _context.SaveChangesAsync();
+
+        var newState = new
+        {
+            employee.Id,
+            employee.EmpCode,
+            employee.FullName,
+            employee.Designation,
+            employee.SubAreaId,
+            SubAreaName = subArea.SubAreaName,
+            AreaName = subArea.Area?.AreaName,
+            Category = employee.IsHigherAuthority ? "Executive" : "Non-Executive",
+            IsHigherAuthority = employee.IsHigherAuthority
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            "WORKER_CREATED",
+            $"EMP:{employee.EmpCode}",
+            $"Worker '{employee.FullName}' ({employee.EmpCode}) onboarded to unit [{subArea.SubAreaName}] by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(newState));
 
         // Retroactively link any past flagged punches and muster roll summaries for this employee code
         try
@@ -291,7 +327,15 @@ public class EmployeeService : IEmployeeService
         );
     }
 
-    public async Task<(bool success, string message)> UpdateEmployeeAsync(int id, UpdateEmployeeDto dto, int? requestingUserAreaId = null)
+    public async Task<(bool success, string message)> UpdateEmployeeAsync(
+        int id, 
+        UpdateEmployeeDto dto, 
+        int? requestingUserAreaId = null,
+        int? requestingUserSubAreaId = null,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var employee = await _context.Employees
             .Include(e => e.SubArea)
@@ -316,8 +360,21 @@ public class EmployeeService : IEmployeeService
             return (false, "Target Colliery Unit was not found.");
         }
 
+        // Permission check for Unit Personnel Managers (UPMs) - Strictly locked to their pit
+        if (requestingUserSubAreaId.HasValue && requestingUserSubAreaId.Value > 0)
+        {
+            if (employee.SubAreaId != requestingUserSubAreaId.Value)
+            {
+                return (false, "Permission denied: You do not have permission to modify workers outside your assigned Colliery Unit.");
+            }
+
+            if (newSubArea.Id != requestingUserSubAreaId.Value)
+            {
+                return (false, "Permission denied: As a Unit Personnel Manager, you cannot transfer workers outside your assigned Colliery Unit.");
+            }
+        }
         // Permission check for Area Personnel Managers (APMs)
-        if (requestingUserAreaId.HasValue)
+        else if (requestingUserAreaId.HasValue)
         {
             if (employee.SubArea != null && employee.SubArea.AreaId != requestingUserAreaId.Value)
             {
@@ -330,49 +387,130 @@ public class EmployeeService : IEmployeeService
             }
         }
 
-        var additionalIds = dto.AdditionalSubAreaIds?.Where(subId => subId != dto.SubAreaId).Distinct().ToList() ?? new List<int>();
+        bool oldIsHigherAuthority = employee.IsHigherAuthority;
+        string oldFullName = employee.FullName;
+        string oldDesignation = employee.Designation;
+        int oldSubAreaId = employee.SubAreaId;
+        string? oldAdditionalIds = employee.AdditionalSubAreaIds;
+        string oldCategory = oldIsHigherAuthority ? "Executive" : "Non-Executive";
+        string newCategory = dto.IsHigherAuthority ? "Executive" : "Non-Executive";
 
-        employee.FullName = dto.FullName.Trim();
-        employee.Designation = string.IsNullOrWhiteSpace(dto.Designation) ? "Colliery Worker" : dto.Designation.Trim();
+        var additionalIds = dto.AdditionalSubAreaIds?.Where(subId => subId != dto.SubAreaId).Distinct().ToList() ?? new List<int>();
+        string? newAdditionalCsv = additionalIds.Any() ? string.Join(",", additionalIds) : null;
+        string newFullName = dto.FullName.Trim();
+        string newDesignation = string.IsNullOrWhiteSpace(dto.Designation) ? "Colliery Worker" : dto.Designation.Trim();
+
+        bool locationsChanged = (oldSubAreaId != dto.SubAreaId) || !string.Equals(oldAdditionalIds ?? "", newAdditionalCsv ?? "", StringComparison.Ordinal);
+        bool nameChanged = !string.Equals(oldFullName, newFullName, StringComparison.OrdinalIgnoreCase);
+        bool authorityChanged = (oldIsHigherAuthority != dto.IsHigherAuthority);
+        bool designationChanged = !string.Equals(oldDesignation, newDesignation, StringComparison.OrdinalIgnoreCase);
+
+        // Case 1: Colliery Unit location or Worker Name changed (requires updating biometric server / physical turnstiles)
+        if (locationsChanged || nameChanged)
+        {
+            // Build comma-separated location codes (single or multiple) as per eBios contract
+            string locationCodes = await BuildLocationCodesAsync(dto.SubAreaId, newAdditionalCsv);
+
+            try
+            {
+                var (soapSuccess, soapMsg) = await _ebiosSoapService.UpdateEmployeeAsync(
+                    employee.EmpCode,
+                    newFullName,
+                    locationCodes,
+                    "Employee",
+                    "None"
+                );
+
+                if (!soapSuccess)
+                {
+                    _logger.LogWarning("eBios UpdateEmployee returned non-success for {Code}: {Msg}", employee.EmpCode, soapMsg);
+                    return (false, $"Biometric turnstile sync failed: {soapMsg}. Worker record was not modified.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to dispatch SOAP update for employee {Code}", employee.EmpCode);
+                return (false, "Cannot connect to Biometric Server. Worker record was not modified.");
+            }
+        }
+
+        // Apply changes to database entity now that third-party verification succeeded (or was not required)
+        var previousState = new
+        {
+            employee.Id,
+            employee.EmpCode,
+            FullName = oldFullName,
+            Designation = oldDesignation,
+            SubAreaId = oldSubAreaId,
+            SubAreaName = employee.SubArea?.SubAreaName,
+            AdditionalSubAreaIds = oldAdditionalIds,
+            Category = oldCategory,
+            IsHigherAuthority = oldIsHigherAuthority
+        };
+
+        employee.FullName = newFullName;
+        employee.Designation = newDesignation;
         employee.SubAreaId = dto.SubAreaId;
         employee.IsHigherAuthority = dto.IsHigherAuthority;
-        employee.AdditionalSubAreaIds = additionalIds.Any() ? string.Join(",", additionalIds) : null;
+        employee.AdditionalSubAreaIds = newAdditionalCsv;
+
+        if (locationsChanged || nameChanged)
+        {
+            employee.IsSyncedToEbios = true;
+            employee.LastSyncedAt = DateTime.UtcNow;
+        }
 
         await _context.SaveChangesAsync();
 
-        // Build comma-separated location codes (single or multiple) as per eBios contract
-        string locationCodes = await BuildLocationCodesAsync(employee.SubAreaId, employee.AdditionalSubAreaIds);
-
-        // Dispatch background update to eBios biometric server
-        try
+        var newState = new
         {
-            var (soapSuccess, soapMsg) = await _ebiosSoapService.UpdateEmployeeAsync(
-                employee.EmpCode,
-                employee.FullName,
-                locationCodes,
-                "Employee",
-                "None"
-            );
+            employee.Id,
+            employee.EmpCode,
+            FullName = employee.FullName,
+            Designation = employee.Designation,
+            SubAreaId = employee.SubAreaId,
+            SubAreaName = newSubArea.SubAreaName,
+            AdditionalSubAreaIds = employee.AdditionalSubAreaIds,
+            Category = newCategory,
+            IsHigherAuthority = employee.IsHigherAuthority
+        };
 
-            if (soapSuccess)
-            {
-                employee.IsSyncedToEbios = true;
-                employee.LastSyncedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-                _logger.LogInformation("Successfully updated and re-synced Employee {Code} to locations: {Locations}", employee.EmpCode, locationCodes);
-                return (true, $"Worker '{employee.FullName}' updated with locations [{locationCodes}]. Biometric turnstiles updated.");
-            }
-            else
-            {
-                _logger.LogWarning("eBios UpdateEmployee returned non-success for {Code}: {Msg}", employee.EmpCode, soapMsg);
-                return (true, $"Worker updated locally, but biometric server returned: {soapMsg}");
-            }
-        }
-        catch (Exception ex)
+        // Audit logging: Executive <-> Non-Executive category change
+        if (authorityChanged)
         {
-            _logger.LogError(ex, "Failed to dispatch SOAP update for employee {Code}", employee.EmpCode);
-            return (true, $"Worker updated in database, but biometric sync encountered an issue: {ex.Message}");
+            await _auditService.LogSecurityActionAsync(
+                "EMPLOYEE_CATEGORY_CHANGED",
+                $"EMP:{employee.EmpCode}",
+                $"Worker '{employee.FullName}' ({employee.EmpCode}) category changed from {oldCategory} to {newCategory} (Single-punch privilege {(dto.IsHigherAuthority ? "GRANTED" : "REVOKED")}) by {performedByUsername ?? "Admin"}.",
+                performedByUserId,
+                performedByUsername ?? "admin",
+                performedByOfficerName ?? performedByUsername ?? "System Admin",
+                performedByRole ?? "Officer",
+                JsonSerializer.Serialize(previousState),
+                JsonSerializer.Serialize(newState));
         }
+
+        // Audit logging: Colliery Unit transfer
+        if (locationsChanged)
+        {
+            await _auditService.LogSecurityActionAsync(
+                "WORKER_TRANSFER",
+                $"EMP:{employee.EmpCode}",
+                $"Worker '{employee.FullName}' ({employee.EmpCode}) location updated from [{employee.SubArea?.SubAreaName}] to [{newSubArea.SubAreaName}] by {performedByUsername ?? "Admin"}.",
+                performedByUserId,
+                performedByUsername ?? "admin",
+                performedByOfficerName ?? performedByUsername ?? "System Admin",
+                performedByRole ?? "Officer",
+                JsonSerializer.Serialize(previousState),
+                JsonSerializer.Serialize(newState));
+        }
+
+        if (locationsChanged || nameChanged)
+        {
+            return (true, $"Worker '{employee.FullName}' updated and synchronized with biometric turnstiles.");
+        }
+
+        return (true, $"Worker '{employee.FullName}' ({employee.EmpCode}) updated successfully.");
     }
 
     public async Task<List<WorkerDeviceAccessDto>> GetWorkerDevicesAsync(int employeeId)
@@ -415,7 +553,14 @@ public class EmployeeService : IEmployeeService
         )).ToList();
     }
 
-    public async Task<(bool success, string message)> ToggleWorkerDeviceAccessAsync(int employeeId, string deviceSerialNumber, bool block)
+    public async Task<(bool success, string message)> ToggleWorkerDeviceAccessAsync(
+        int employeeId, 
+        string deviceSerialNumber, 
+        bool block,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var employee = await _context.Employees.FindAsync(employeeId);
         if (employee == null) return (false, "Employee not found.");
@@ -429,7 +574,13 @@ public class EmployeeService : IEmployeeService
             blockUser: block
         );
 
-        // 2. Update employee's BlockedDeviceSerials set
+        if (!soapSuccess)
+        {
+            _logger.LogWarning("Turnstile block/unblock failed for {Serial} / {Code}: {Msg}", deviceSerialNumber, employee.EmpCode, soapMsg);
+            return (false, $"Turnstile command failed: {soapMsg}. Hardware access was not changed.");
+        }
+
+        // 2. Only if hardware confirmed success, update employee's BlockedDeviceSerials set
         var blockedSet = (employee.BlockedDeviceSerials ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim().ToUpperInvariant())
@@ -463,17 +614,34 @@ public class EmployeeService : IEmployeeService
         await _context.SaveChangesAsync();
 
         string action = block ? "Blocked" : "Unblocked";
-        string msg = soapSuccess
-            ? $"Turnstile {deviceSerialNumber} {action} for {employee.FullName} ({employee.EmpCode})."
-            : $"Turnstile record updated, but biometric server returned: {soapMsg}";
+        string msg = $"Turnstile {deviceSerialNumber} {action.ToLower()} for worker {employee.FullName} ({employee.EmpCode}).";
+
+        await _auditService.LogSecurityActionAsync(
+            block ? "WORKER_DEVICE_BLOCKED" : "WORKER_DEVICE_UNBLOCKED",
+            $"EMP:{employee.EmpCode} | DEV:{deviceSerialNumber}",
+            $"Worker '{employee.FullName}' ({employee.EmpCode}) access on turnstile {deviceSerialNumber} was {action.ToLower()} by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(new { employee.EmpCode, deviceSerialNumber, blocked = block }));
 
         return (true, msg);
     }
 
-    public async Task<(bool success, string message)> BlockAllDevicesForWorkerAsync(int employeeId, bool blockAll)
+    public async Task<(bool success, string message)> BlockAllDevicesForWorkerAsync(
+        int employeeId, 
+        bool blockAll,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var employee = await _context.Employees.FindAsync(employeeId);
         if (employee == null) return (false, "Employee not found.");
+
+        bool oldIsActive = employee.IsActive;
 
         var devices = await GetWorkerDevicesAsync(employeeId);
         if (!devices.Any())
@@ -502,6 +670,12 @@ public class EmployeeService : IEmployeeService
             }
         }
 
+        // If any hardware turnstile command failed, fail and do NOT alter local status
+        if (successCount < devices.Count && devices.Any())
+        {
+            return (false, $"Unable to communicate with all biometric turnstiles ({successCount}/{devices.Count} turnstiles responded). Hardware access status was not changed.");
+        }
+
         if (blockAll)
         {
             employee.IsActive = false;
@@ -516,19 +690,48 @@ public class EmployeeService : IEmployeeService
         await _context.SaveChangesAsync();
 
         string action = blockAll ? "Blocked" : "Unblocked";
+
+        var previousState = new { employee.Id, employee.EmpCode, employee.FullName, IsActive = oldIsActive };
+        var newState = new { employee.Id, employee.EmpCode, employee.FullName, IsActive = employee.IsActive };
+
+        await _auditService.LogSecurityActionAsync(
+            blockAll ? "WORKER_ACCESS_BLOCKED" : "WORKER_ACCESS_UNBLOCKED",
+            $"EMP:{employee.EmpCode}",
+            $"Worker '{employee.FullName}' ({employee.EmpCode}) was {action.ToLower()} across all turnstiles by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            JsonSerializer.Serialize(previousState),
+            JsonSerializer.Serialize(newState));
+
         return (true, $"{action} worker '{employee.FullName}' across all {devices.Count} turnstiles ({successCount}/{devices.Count} device commands executed).");
     }
 
-    public async Task<(bool success, string message)> ToggleEmployeeStatusAsync(int id, string? reason = null, bool isBlacklist = false)
+    public async Task<(bool success, string message)> ToggleEmployeeStatusAsync(
+        int id, 
+        string? reason = null, 
+        bool isBlacklist = false,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var employee = await _context.Employees.FindAsync(id);
         if (employee == null) return (false, "Employee not found.");
 
         bool targetBlock = employee.IsActive; // If currently active, we want to block on all devices
-        return await BlockAllDevicesForWorkerAsync(id, targetBlock);
+        return await BlockAllDevicesForWorkerAsync(id, targetBlock, performedByUserId, performedByUsername, performedByOfficerName, performedByRole);
     }
 
-    public async Task<(bool success, string message)> ToggleHigherAuthorityAsync(int employeeId, int? requestingUserAreaId = null)
+    public async Task<(bool success, string message)> ToggleHigherAuthorityAsync(
+        int employeeId, 
+        int? requestingUserAreaId = null,
+        int? requestingUserSubAreaId = null,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         var employee = await _context.Employees
             .Include(e => e.SubArea)
@@ -536,8 +739,16 @@ public class EmployeeService : IEmployeeService
 
         if (employee == null) return (false, "Employee not found.");
 
+        // Unit Personnel Manager jurisdiction check
+        if (requestingUserSubAreaId.HasValue && requestingUserSubAreaId.Value > 0)
+        {
+            if (employee.SubAreaId != requestingUserSubAreaId.Value)
+            {
+                return (false, "Permission denied. You can only configure Higher Authorities for workers in your own assigned Colliery Unit.");
+            }
+        }
         // Area Personnel Manager jurisdiction check
-        if (requestingUserAreaId.HasValue && requestingUserAreaId.Value > 0)
+        else if (requestingUserAreaId.HasValue && requestingUserAreaId.Value > 0)
         {
             if (employee.SubArea == null || employee.SubArea.AreaId != requestingUserAreaId.Value)
             {
@@ -545,17 +756,41 @@ public class EmployeeService : IEmployeeService
             }
         }
 
+        bool oldIsHigherAuthority = employee.IsHigherAuthority;
+        string oldRole = oldIsHigherAuthority ? "Executive" : "Non-Executive";
+
         employee.IsHigherAuthority = !employee.IsHigherAuthority;
         await _context.SaveChangesAsync();
 
-        string role = employee.IsHigherAuthority ? "Executive" : "General Colliery Personnel";
-        _logger.LogInformation("Updated employee {Code} authority status to: {Status}", employee.EmpCode, role);
+        string newRole = employee.IsHigherAuthority ? "Executive" : "Non-Executive";
+        _logger.LogInformation("Updated employee {Code} authority status to: {Status}", employee.EmpCode, newRole);
 
-        return (true, $"{employee.FullName} ({employee.EmpCode}) is now mapped as {role}.");
+        var previousState = new { employee.Id, employee.EmpCode, employee.FullName, Category = oldRole, IsHigherAuthority = oldIsHigherAuthority };
+        var newState = new { employee.Id, employee.EmpCode, employee.FullName, Category = newRole, IsHigherAuthority = employee.IsHigherAuthority };
+
+        await _auditService.LogSecurityActionAsync(
+            "EMPLOYEE_CATEGORY_CHANGED",
+            $"EMP:{employee.EmpCode}",
+            $"Worker '{employee.FullName}' ({employee.EmpCode}) category changed from {oldRole} to {newRole} (Single-punch privilege {(employee.IsHigherAuthority ? "GRANTED" : "REVOKED")}) by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            JsonSerializer.Serialize(previousState),
+            JsonSerializer.Serialize(newState));
+
+        return (true, $"{employee.FullName} ({employee.EmpCode}) is now mapped as {newRole}.");
     }
 
     public async Task<(int successCount, int totalCount, string message)> BulkBlacklistEmployeesAsync(
-        List<BulkBlockEntryDto> entries, string reason, int? requestingUserAreaId = null, int? requestingUserSubAreaId = null)
+        List<BulkBlockEntryDto> entries, 
+        string reason, 
+        int? requestingUserAreaId = null, 
+        int? requestingUserSubAreaId = null,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         if (entries == null || !entries.Any())
         {
@@ -777,6 +1012,26 @@ public class EmployeeService : IEmployeeService
 
         await _context.SaveChangesAsync();
 
+        var bulkSummary = new
+        {
+            Action = isBlacklist ? "Blacklist" : "Turnstile Access Update",
+            ProcessedCount = matchingEmployees.Count,
+            HardwareCommandsDispatched = hardwareDispatchedCount,
+            Reason = reason,
+            SampleWorkerCodes = matchingEmployees.Take(15).Select(e => e.EmpCode).ToList()
+        };
+
+        await _auditService.LogSecurityActionAsync(
+            isBlacklist ? "BULK_WORKERS_BLACKLISTED" : "BULK_TURNSTILE_ACCESS_UPDATED",
+            $"BATCH:{matchingEmployees.Count}_WORKERS",
+            $"Bulk {bulkSummary.Action}: {matchingEmployees.Count} worker(s) updated across turnstiles (Reason: {reason}) by {performedByUsername ?? "Admin"}.",
+            performedByUserId,
+            performedByUsername ?? "admin",
+            performedByOfficerName ?? performedByUsername ?? "System Admin",
+            performedByRole ?? "Officer",
+            null,
+            JsonSerializer.Serialize(bulkSummary));
+
         string msg = $"Successfully processed {matchingEmployees.Count} employee(s) across target turnstiles ({hardwareDispatchedCount} hardware commands dispatched).";
         return (matchingEmployees.Count, matchingEmployees.Count, msg);
     }
@@ -917,7 +1172,13 @@ public class EmployeeService : IEmployeeService
         return (true, $"Designation '{cleanTitle}' deleted successfully.");
     }
 
-    public async Task<(int successCount, int totalCount, List<string> errors)> BulkCreateEmployeesAsync(List<BulkEmployeeEntryDto> entries, int? defaultSubAreaId = null)
+    public async Task<(int successCount, int totalCount, List<string> errors)> BulkCreateEmployeesAsync(
+        List<BulkEmployeeEntryDto> entries, 
+        int? defaultSubAreaId = null,
+        int? performedByUserId = null,
+        string? performedByUsername = null,
+        string? performedByOfficerName = null,
+        string? performedByRole = null)
     {
         int successCount = 0;
         var errors = new List<string>();
@@ -1089,6 +1350,28 @@ public class EmployeeService : IEmployeeService
             {
                 _logger.LogWarning("Retroactive linking warning during bulk employee import: {Msg}", ex.Message);
             }
+        }
+
+        if (successCount > 0)
+        {
+            var bulkSummary = new
+            {
+                SuccessCount = successCount,
+                TotalCount = entries.Count,
+                ErrorCount = errors.Count,
+                SampleErrors = errors.Take(5).ToList()
+            };
+
+            await _auditService.LogSecurityActionAsync(
+                "BULK_WORKERS_IMPORTED",
+                $"BATCH:{successCount}_WORKERS",
+                $"Bulk CSV Import: Successfully onboarded/updated {successCount} of {entries.Count} workers by {performedByUsername ?? "Admin"}.",
+                performedByUserId,
+                performedByUsername ?? "admin",
+                performedByOfficerName ?? performedByUsername ?? "System Admin",
+                performedByRole ?? "Officer",
+                null,
+                JsonSerializer.Serialize(bulkSummary));
         }
 
         return (successCount, entries.Count, errors);

@@ -1,11 +1,13 @@
 @page "/attendance"
 @rendermode InteractiveServer
+@using Ebios.Application.Common
 @inject IAttendanceService AttendanceService
 @inject IAttendanceProcessingService AttendanceProcessingService
 @inject IShiftService ShiftService
 @inject IEmployeeService EmployeeService
 @inject IAreaService AreaService
 @inject ISftpAttendanceService SftpService
+@inject IAuditService AuditService
 @inject IConfiguration Configuration
 @inject UserSessionService UserSession
 @inject NavigationManager Navigation
@@ -231,8 +233,11 @@
 
                 <div class="col-6 col-md-2">
                     <label class="form-label small fw-semibold">Colliery / Sub-Area</label>
-                    <select class="form-select form-select-sm" @bind="musterSubAreaId" @bind:after="LoadMusterRollAsync">
-                        <option value="0">All Colliery Units</option>
+                    <select class="form-select form-select-sm" @bind="musterSubAreaId" @bind:after="LoadMusterRollAsync" disabled="@UserSession.IsUnitAdmin">
+                        @if (!UserSession.IsUnitAdmin)
+                        {
+                            <option value="0">All Colliery Units</option>
+                        }
                         @foreach (var sub in permittedSubAreas)
                         {
                             <option value="@sub.Id">@sub.SubAreaName</option>
@@ -339,7 +344,11 @@
                                     }
                                     @if (m.IsManuallyCorrected)
                                     {
-                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle ms-1" title="Regularized by @m.CorrectedBy: @m.CorrectionReason">✏️ Regularized</span>
+                                        <button type="button" class="btn btn-link p-0 text-decoration-none badge bg-info-subtle text-info-emphasis border border-info-subtle ms-1"
+                                                @onclick="@(() => OpenRecordAuditHistoryModal(m.EmpCode, m.AttendanceDate))"
+                                                title="Click to view full modification history (Logged by @m.CorrectedBy: @m.CorrectionReason)">
+                                            ✏️ Regularized <i class="bi bi-clock-history ms-1"></i>
+                                        </button>
                                     }
                                     @if (m.IsFlagged)
                                     {
@@ -490,6 +499,9 @@
                                                 <button class="btn btn-outline-info btn-sm py-0 px-2 fw-semibold" @onclick="@(() => OpenRegularizeModal(m))" title="Edit Manual Correction (Logged by @m.CorrectedBy)">
                                                     ✏️ Edit
                                                 </button>
+                                                <button class="btn btn-outline-secondary btn-sm py-0 px-1 ms-1" @onclick="@(() => OpenRecordAuditHistoryModal(m.EmpCode, m.AttendanceDate))" title="View Audit Trail for this record">
+                                                    <i class="bi bi-clock-history"></i>
+                                                </button>
                                             }
                                             else
                                             {
@@ -596,8 +608,11 @@ else
 
                 <div class="col-6 col-md-2">
                     <label class="form-label small fw-semibold mb-1">Colliery Unit</label>
-                    <select class="form-select form-select-sm" @bind="subAreaFilter" @bind:after="LoadLogsAsync">
-                        <option value="0">All Colliery Units</option>
+                    <select class="form-select form-select-sm" @bind="subAreaFilter" @bind:after="LoadLogsAsync" disabled="@UserSession.IsUnitAdmin">
+                        @if (!UserSession.IsUnitAdmin)
+                        {
+                            <option value="0">All Colliery Units</option>
+                        }
                         @foreach (var sub in permittedSubAreas)
                         {
                             <option value="@sub.Id">@sub.SubAreaName</option>
@@ -773,13 +788,17 @@ else
 
                     <div class="mb-3">
                         <label class="form-label small fw-semibold">Colliery Unit <span class="text-danger">*</span></label>
-                        <select class="form-select" @bind="onboardSubAreaId">
+                        <select class="form-select" @bind="onboardSubAreaId" disabled="@UserSession.IsUnitAdmin">
                             <option value="0">-- Select Colliery --</option>
                             @foreach (var sub in permittedSubAreas)
                             {
                                 <option value="@sub.Id">@sub.SubAreaName</option>
                             }
                         </select>
+                        @if (UserSession.IsUnitAdmin)
+                        {
+                            <small class="text-muted d-block mt-1">Locked to your assigned colliery unit: @(UserSession.CurrentUser?.SubAreaName).</small>
+                        }
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1029,57 +1048,90 @@ else
 @if (isSftpModalOpen)
 {
     <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1055;">
-        <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content border-0 shadow-lg">
                 <div class="modal-header bg-dark text-white py-3">
                     <h5 class="modal-title fw-bold mb-0">
-                        <i class="bi bi-cloud-arrow-up me-2 text-info"></i> SFTP Attendance Dispatch
+                        <i class="bi bi-cloud-arrow-up me-2 text-info"></i> SFTP Attendance Dispatch &amp; Transmission Log
                     </h5>
                     <button type="button" class="btn-close btn-close-white" @onclick="CloseSftpModal" disabled="@isSftpTransmitting"></button>
                 </div>
                 <div class="modal-body p-4">
+                    <!-- Last Transmission Status Card -->
+                    @if (lastSftpStatus != null && lastSftpStatus.HasRun)
+                    {
+                        @if (lastSftpStatus.Status == "DELIVERED_VERIFIED" || lastSftpStatus.Status == "SUCCESS")
+                        {
+                            <div class="alert alert-success d-flex align-items-center py-2 mb-3">
+                                <i class="bi bi-check-circle-fill fs-4 me-2 text-success"></i>
+                                <div>
+                                    <div class="fw-bold small">Last SFTP Sync: 🟢 DELIVERED &amp; VERIFIED</div>
+                                    <div class="small text-muted">
+                                        Transmitted @lastSftpStatus.Timestamp?.ToLocalTime().ToString("dd-MM-yyyy HH:mm:ss") &bull;
+                                        <strong>@lastSftpStatus.RecordCount</strong> records (@((lastSftpStatus.FileSizeBytes ?? 0) / 1024.0):F1 KB) &bull;
+                                        <code>@lastSftpStatus.FileName</code>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="alert alert-danger d-flex align-items-center py-2 mb-3">
+                                <i class="bi bi-exclamation-triangle-fill fs-4 me-2 text-danger"></i>
+                                <div>
+                                    <div class="fw-bold small">Last SFTP Sync: 🔴 FAILED TO DELIVER</div>
+                                    <div class="small">@lastSftpStatus.ErrorMessage</div>
+                                    <div class="small text-muted">Attempted at @lastSftpStatus.Timestamp?.ToLocalTime().ToString("dd-MM-yyyy HH:mm:ss")</div>
+                                </div>
+                            </div>
+                        }
+                    }
+
                     <p class="text-muted small mb-3">
                         Transmit standardized CSV attendance report directly to the remote SFTP server in the requested format (<code>Employee Id, Attendance date, Capture_date in, Employee time in...</code>).
                     </p>
 
                     <div class="bg-light p-3 rounded border mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                            <span class="small fw-semibold text-muted">SFTP Host:</span>
-                            <span class="badge bg-secondary font-monospace">@sftpHostPreview:@sftpPortPreview</span>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                            <span class="small text-muted">User / Directory:</span>
-                            <span class="small font-monospace text-dark">@sftpUserPreview &rarr; @sftpDirPreview</span>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="small text-muted">Scheduled Trigger:</span>
-                            <span class="badge bg-success-subtle text-success border border-success-subtle">
-                                <i class="bi bi-clock me-1"></i> Daily at @sftpScheduleTimePreview
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold">Attendance Date to Transmit</label>
-                        <input type="date" class="form-control" @bind="sftpTargetDate" disabled="@isSftpTransmitting" />
-                        <div class="form-text text-muted">
-                            Exports records matching this date formatted as <code>dd.MM.yyyy</code> with time in/out.
+                        <div class="row g-2">
+                            <div class="col-md-6">
+                                <span class="small fw-semibold text-muted">SFTP Host:</span>
+                                <span class="badge bg-secondary font-monospace ms-1">@sftpHostPreview:@sftpPortPreview</span>
+                            </div>
+                            <div class="col-md-6">
+                                <span class="small text-muted">User / Directory:</span>
+                                <span class="small font-monospace text-dark ms-1">@sftpUserPreview &rarr; @sftpDirPreview</span>
+                            </div>
+                            <div class="col-md-12">
+                                <span class="small text-muted">Scheduled Trigger:</span>
+                                <span class="badge bg-success-subtle text-success border border-success-subtle ms-1">
+                                    <i class="bi bi-clock me-1"></i> Daily at @sftpScheduleTimePreview (Auto 3-Time Retry on failure)
+                                </span>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="d-flex gap-2 mb-3">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="TestSftpConnectionAsync" disabled="@isSftpTesting">
-                            @if (isSftpTesting)
-                            {
-                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                                <span>Testing...</span>
-                            }
-                            else
-                            {
-                                <i class="bi bi-plug me-1"></i>
-                                <span>Test Connection</span>
-                            }
-                        </button>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-7">
+                            <label class="form-label small fw-semibold">Attendance Date to Transmit</label>
+                            <input type="date" class="form-control" @bind="sftpTargetDate" disabled="@isSftpTransmitting" />
+                            <div class="form-text text-muted">
+                                Exports records matching this date formatted as <code>dd.MM.yyyy</code> with time in/out.
+                            </div>
+                        </div>
+                        <div class="col-md-5 d-flex align-items-end">
+                            <button type="button" class="btn btn-outline-secondary btn-sm w-100 py-2" @onclick="TestSftpConnectionAsync" disabled="@isSftpTesting">
+                                @if (isSftpTesting)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                    <span>Testing Connection...</span>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-plug me-1"></i>
+                                    <span>Test SFTP Connection</span>
+                                }
+                            </button>
+                        </div>
                     </div>
 
                     @if (!string.IsNullOrEmpty(sftpTestStatus))
@@ -1091,10 +1143,10 @@ else
 
                     @if (sftpTransmitResult != null)
                     {
-                        <div class="alert @(sftpTransmitResult.Success ? "alert-success" : "alert-danger") py-2 small mb-0">
+                        <div class="alert @(sftpTransmitResult.Success ? "alert-success" : "alert-danger") py-2 small mb-3">
                             @if (sftpTransmitResult.Success)
                             {
-                                <div class="fw-bold mb-1">✅ Upload Successful</div>
+                                <div class="fw-bold mb-1">✅ Upload Successful &amp; Delivery Verified</div>
                                 <div><strong>File:</strong> <code>@sftpTransmitResult.RemoteFilePath</code></div>
                                 <div><strong>Records Sent:</strong> @sftpTransmitResult.RecordCount</div>
                                 <div class="text-muted small mt-1">Uploaded at @sftpTransmitResult.TransmittedAt?.ToLocalTime().ToString("HH:mm:ss")</div>
@@ -1106,14 +1158,71 @@ else
                             }
                         </div>
                     }
+
+                    <!-- Recent Transmissions Audit Trail Table -->
+                    <div class="mt-4 pt-3 border-top">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="small fw-bold text-dark text-uppercase tracking-wide">
+                                <i class="bi bi-clock-history me-1 text-info"></i> Recent SFTP Transmissions Audit
+                            </span>
+                            <a href="audit-logs?category=SftpDispatch" class="small text-decoration-none" target="_blank">
+                                View Full Audit Log &rarr;
+                            </a>
+                        </div>
+                        <div class="table-responsive border rounded" style="max-height: 180px; overflow-y: auto;">
+                            <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.8rem;">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Remote File</th>
+                                        <th class="text-center">Records</th>
+                                        <th>Triggered By</th>
+                                        <th class="text-center">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @if (recentSftpLogs == null || recentSftpLogs.Count == 0)
+                                    {
+                                        <tr>
+                                            <td colspan="5" class="text-center text-muted py-2">No past SFTP transmissions logged yet.</td>
+                                        </tr>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var log in recentSftpLogs)
+                                        {
+                                            <tr>
+                                                <td class="font-monospace text-nowrap">@log.Timestamp.ToLocalTime().ToString("dd-MM-yy HH:mm")</td>
+                                                <td class="font-monospace text-truncate" style="max-width: 170px;" title="@log.EntityReference">@log.EntityReference</td>
+                                                <td class="text-center fw-bold">
+                                                    @(log.Details.Contains("Uploaded") ? System.Text.RegularExpressions.Regex.Match(log.Details, @"\d+").Value : "—")
+                                                </td>
+                                                <td>@log.OfficerName</td>
+                                                <td class="text-center">
+                                                    @if (log.Status == "SUCCESS" || log.Action == "SFTP_DELIVERED_VERIFIED")
+                                                    {
+                                                        <span class="badge bg-success">Verified</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge bg-danger" title="@log.Details">Failed</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer bg-light py-2">
                     <button type="button" class="btn btn-secondary btn-sm" @onclick="CloseSftpModal" disabled="@isSftpTransmitting">Close</button>
-                    <button type="button" class="btn btn-primary btn-sm" @onclick="TransmitSftpAsync" disabled="@isSftpTransmitting">
+                    <button type="button" class="btn btn-primary btn-sm fw-semibold" @onclick="TransmitSftpAsync" disabled="@isSftpTransmitting">
                         @if (isSftpTransmitting)
                         {
                             <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                            <span>Transmitting...</span>
+                            <span>Transmitting &amp; Verifying...</span>
                         }
                         else
                         {
@@ -1121,6 +1230,124 @@ else
                             <span>Transmit Now</span>
                         }
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- ======================================================== -->
+<!-- MODAL: Single Record Audit History (Before vs After)     -->
+<!-- ======================================================== -->
+@if (isRecordAuditModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1060;">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white py-3">
+                    <h5 class="modal-title fs-6 fw-bold">
+                        <i class="bi bi-clock-history text-warning me-2"></i>Audit History: @selectedAuditEmpCode &bull; @selectedAuditDate.ToString("dd-MM-yyyy")
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseRecordAuditHistoryModal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    @if (isRecordAuditLoading)
+                    {
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary spinner-border-sm me-2" role="status"></div>
+                            <span class="text-muted small">Loading chronological audit trail...</span>
+                        </div>
+                    }
+                    else if (recordAuditLogs == null || recordAuditLogs.Count == 0)
+                    {
+                        <div class="text-center py-4 text-muted">
+                            <i class="bi bi-info-circle fs-3 d-block mb-2 text-secondary"></i>
+                            No historical modification events recorded for this record yet.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="timeline">
+                            @foreach (var log in recordAuditLogs)
+                            {
+                                <div class="card mb-3 border-start border-4 @(log.Action == "REGULARIZATION_OVERWRITTEN" ? "border-warning" : "border-info") shadow-sm">
+                                    <div class="card-header bg-light d-flex justify-content-between align-items-center py-2">
+                                        <div>
+                                            <span class="badge @(log.Action == "REGULARIZATION_OVERWRITTEN" ? "bg-warning text-dark" : "bg-info") me-1">
+                                                @(log.Action == "REGULARIZATION_OVERWRITTEN" ? "⚠️ Overwritten" : "✏️ Applied")
+                                            </span>
+                                            <strong class="small text-dark">@log.OfficerName</strong>
+                                            <span class="text-muted small">(@log.Role)</span>
+                                        </div>
+                                        <span class="small font-monospace text-muted">
+                                            @log.Timestamp.ToLocalTime().ToString("dd-MM-yyyy HH:mm:ss")
+                                        </span>
+                                    </div>
+                                    <div class="card-body p-3">
+                                        <p class="small mb-2 text-dark">@log.Details</p>
+
+                                        @if (!string.IsNullOrEmpty(log.PreviousStateJson) || !string.IsNullOrEmpty(log.NewStateJson))
+                                        {
+                                            var prevAttrs = AuditSnapshotFormatter.FormatAttributes(log.PreviousStateJson);
+                                            var newAttrs = AuditSnapshotFormatter.FormatAttributes(log.NewStateJson);
+
+                                            <div class="row g-2 mt-2">
+                                                @if (prevAttrs.Any())
+                                                {
+                                                    <div class="col-md-6">
+                                                        <div class="card border small">
+                                                            <div class="card-header bg-light py-1 fw-semibold text-danger small">
+                                                                <i class="bi bi-dash-circle me-1"></i> Original Values
+                                                            </div>
+                                                            <div class="card-body p-0">
+                                                                <table class="table table-sm table-striped table-bordered mb-0 small">
+                                                                    <tbody>
+                                                                        @foreach (var attr in prevAttrs)
+                                                                        {
+                                                                            <tr>
+                                                                                <td class="fw-semibold text-secondary" style="width: 45%;">@attr.Label</td>
+                                                                                <td class="text-dark">@attr.Value</td>
+                                                                            </tr>
+                                                                        }
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                }
+                                                @if (newAttrs.Any())
+                                                {
+                                                    <div class="col-md-@(prevAttrs.Any() ? "6" : "12")">
+                                                        <div class="card border small">
+                                                            <div class="card-header bg-light py-1 fw-semibold text-success small">
+                                                                <i class="bi bi-plus-circle me-1"></i> Modified Values
+                                                            </div>
+                                                            <div class="card-body p-0">
+                                                                <table class="table table-sm table-striped table-bordered mb-0 small">
+                                                                    <tbody>
+                                                                        @foreach (var attr in newAttrs)
+                                                                        {
+                                                                            <tr>
+                                                                                <td class="fw-semibold text-secondary" style="width: 45%;">@attr.Label</td>
+                                                                                <td class="text-dark">@attr.Value</td>
+                                                                            </tr>
+                                                                        }
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer bg-light py-2">
+                    <button type="button" class="btn btn-secondary btn-sm" @onclick="CloseRecordAuditHistoryModal">Close</button>
                 </div>
             </div>
         </div>
@@ -1198,7 +1425,17 @@ else
     private string sftpDirPreview = "/";
     private string sftpScheduleTimePreview = "23:45";
 
-    private void OpenSftpModal()
+    private LastSftpStatusDto? lastSftpStatus;
+    private List<AuditLogDto> recentSftpLogs = new();
+
+    // Record Audit Modal State
+    private bool isRecordAuditModalOpen = false;
+    private string selectedAuditEmpCode = "";
+    private DateTime selectedAuditDate;
+    private List<AuditLogDto> recordAuditLogs = new();
+    private bool isRecordAuditLoading = false;
+
+    private async Task OpenSftpModal()
     {
         sftpTargetDate = musterToDate;
         sftpTestStatus = null;
@@ -1211,6 +1448,21 @@ else
         sftpDirPreview = Environment.GetEnvironmentVariable("SFTP_REMOTE_PATH") ?? Configuration["SftpServer:RemotePath"] ?? "/";
         sftpScheduleTimePreview = Environment.GetEnvironmentVariable("SFTP_SCHEDULE_TIME") ?? Configuration["SftpServer:DailyScheduledTime"] ?? "23:45";
         isSftpModalOpen = true;
+
+        await LoadSftpAuditDataAsync();
+    }
+
+    private async Task LoadSftpAuditDataAsync()
+    {
+        try
+        {
+            lastSftpStatus = await AuditService.GetLastSftpStatusAsync();
+            recentSftpLogs = await AuditService.GetRecentSftpLogsAsync(5);
+        }
+        catch
+        {
+            // Non-critical UI state
+        }
     }
 
     private void CloseSftpModal()
@@ -1248,11 +1500,22 @@ else
             int? areaId = UserSession.IsAreaAdmin ? UserSession.CurrentUser?.AreaId : null;
             int? subAreaId = musterSubAreaId > 0 ? musterSubAreaId : (UserSession.IsUnitAdmin ? UserSession.CurrentUser?.SubAreaId : null);
 
-            sftpTransmitResult = await SftpService.ExportAndUploadDailyAttendanceAsync(sftpTargetDate, areaId, subAreaId);
+            sftpTransmitResult = await SftpService.ExportAndUploadDailyAttendanceAsync(
+                sftpTargetDate,
+                areaId,
+                subAreaId,
+                triggerType: "MANUAL_PUSH",
+                userId: UserSession.CurrentUser?.Id,
+                username: UserSession.CurrentUser?.Username ?? "Officer",
+                officerName: UserSession.CurrentUser?.FullName ?? "Officer",
+                role: UserSession.CurrentUser?.Role.ToString() ?? "Officer");
+
             if (sftpTransmitResult.Success)
             {
                 successMessage = $"Transmitted {sftpTransmitResult.RecordCount} attendance records to SFTP server.";
             }
+
+            await LoadSftpAuditDataAsync();
         }
         catch (Exception ex)
         {
@@ -1262,6 +1525,33 @@ else
         {
             isSftpTransmitting = false;
         }
+    }
+
+    private async Task OpenRecordAuditHistoryModal(string empCode, DateTime date)
+    {
+        selectedAuditEmpCode = empCode;
+        selectedAuditDate = date;
+        isRecordAuditModalOpen = true;
+        isRecordAuditLoading = true;
+        try
+        {
+            string reference = $"EMP:{empCode.ToUpper()} | Date:{date:yyyy-MM-dd}";
+            recordAuditLogs = await AuditService.GetRecordAuditHistoryAsync(reference);
+        }
+        catch
+        {
+            recordAuditLogs = new();
+        }
+        finally
+        {
+            isRecordAuditLoading = false;
+        }
+    }
+
+    private void CloseRecordAuditHistoryModal()
+    {
+        isRecordAuditModalOpen = false;
+        recordAuditLogs.Clear();
     }
 
     private string? successMessage;
@@ -1287,7 +1577,17 @@ else
 
     private async Task LoadMetadataAsync()
     {
-        permittedSubAreas = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
+        var subs = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
+        if (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
+        {
+            permittedSubAreas = subs.Where(s => s.Id == UserSession.CurrentSubAreaId.Value).ToList();
+            musterSubAreaId = UserSession.CurrentSubAreaId.Value;
+            subAreaFilter = UserSession.CurrentSubAreaId.Value;
+        }
+        else
+        {
+            permittedSubAreas = subs;
+        }
         masterShifts = await ShiftService.GetAllShiftsAsync();
     }
 
@@ -1501,7 +1801,9 @@ else
         onboardEmpCode = log.EmpCode;
         onboardFullName = string.Empty;
         onboardDesignation = "Colliery Worker";
-        onboardSubAreaId = log.SubAreaId ?? (permittedSubAreas.FirstOrDefault()?.Id ?? 0);
+        onboardSubAreaId = (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
+            ? UserSession.CurrentSubAreaId.Value
+            : (log.SubAreaId ?? (permittedSubAreas.FirstOrDefault()?.Id ?? 0));
         onboardError = null;
         showOnboardModal = true;
     }
@@ -1511,7 +1813,9 @@ else
         onboardEmpCode = m.EmpCode;
         onboardFullName = !string.IsNullOrWhiteSpace(m.EmployeeName) && !m.EmployeeName.StartsWith("Unregistered") ? m.EmployeeName : string.Empty;
         onboardDesignation = "Colliery Worker";
-        onboardSubAreaId = m.SubAreaId ?? (permittedSubAreas.FirstOrDefault()?.Id ?? 0);
+        onboardSubAreaId = (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
+            ? UserSession.CurrentSubAreaId.Value
+            : (m.SubAreaId ?? (permittedSubAreas.FirstOrDefault()?.Id ?? 0));
         onboardError = null;
         showOnboardModal = true;
     }
@@ -1528,6 +1832,11 @@ else
         {
             onboardError = "Please enter worker full name.";
             return;
+        }
+
+        if (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
+        {
+            onboardSubAreaId = UserSession.CurrentSubAreaId.Value;
         }
 
         if (onboardSubAreaId <= 0)
@@ -1548,7 +1857,12 @@ else
                 new List<int>()
             );
 
-            var created = await EmployeeService.CreateEmployeeAsync(dto);
+            var created = await EmployeeService.CreateEmployeeAsync(
+                dto,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             successMessage = $"Worker '{created.FullName}' ({created.EmpCode}) onboarded successfully! Past punches linked.";
             showOnboardModal = false;
             await LoadLogsAsync();
@@ -1661,7 +1975,11 @@ else
                 regularizeShiftCode
             );
 
-            var (success, msg) = await AttendanceProcessingService.RegularizeAttendanceAsync(dto);
+            var (success, msg) = await AttendanceProcessingService.RegularizeAttendanceAsync(
+                dto, 
+                UserSession.CurrentAreaId, 
+                UserSession.CurrentSubAreaId
+            );
             if (success)
             {
                 successMessage = msg;
@@ -1692,7 +2010,11 @@ else
 
         try
         {
-            var (success, msg) = await AttendanceProcessingService.RevertToMachinePunchesAsync(selectedMusterRecord.Id);
+            var (success, msg) = await AttendanceProcessingService.RevertToMachinePunchesAsync(
+                selectedMusterRecord.Id, 
+                UserSession.CurrentAreaId, 
+                UserSession.CurrentSubAreaId
+            );
             if (success)
             {
                 successMessage = msg;
@@ -1865,7 +2187,12 @@ else
                 return;
             }
 
-            var result = await AttendanceProcessingService.BulkRegularizeAsync(entries, UserSession.CurrentUser?.Username ?? "Admin");
+            var result = await AttendanceProcessingService.BulkRegularizeAsync(
+                entries, 
+                UserSession.CurrentUser?.Username ?? "Admin",
+                UserSession.CurrentAreaId,
+                UserSession.CurrentSubAreaId
+            );
             
             if (result.Errors.Count == 0)
             {

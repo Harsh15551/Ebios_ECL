@@ -13,15 +13,18 @@ public class SftpAttendanceService : ISftpAttendanceService
 {
     private readonly AppDbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly IAuditService _auditService;
     private readonly ILogger<SftpAttendanceService> _logger;
 
     public SftpAttendanceService(
         AppDbContext context,
         IConfiguration configuration,
+        IAuditService auditService,
         ILogger<SftpAttendanceService> logger)
     {
         _context = context;
         _configuration = configuration;
+        _auditService = auditService;
         _logger = logger;
     }
 
@@ -134,67 +137,125 @@ public class SftpAttendanceService : ISftpAttendanceService
         return sb.ToString();
     }
 
-    public async Task<SftpExportResultDto> ExportAndUploadDailyAttendanceAsync(DateTime attendanceDate, int? areaId = null, int? subAreaId = null)
+    public async Task<SftpExportResultDto> ExportAndUploadDailyAttendanceAsync(
+        DateTime attendanceDate,
+        int? areaId = null,
+        int? subAreaId = null,
+        string triggerType = "MANUAL",
+        int? userId = null,
+        string username = "System",
+        string officerName = "System Worker",
+        string role = "System")
     {
-        var (host, port, username, password, remotePath) = GetSftpConfig();
+        var (host, port, sftpUser, password, remotePath) = GetSftpConfig();
+        string fileName = $"ATTENDANCE_{attendanceDate:yyyyMMdd}_{DateTime.Now:HHmmss}.csv";
+        string targetPath = remotePath.TrimEnd('/') + "/" + fileName;
 
+        string csvContent;
+        int recordCount = 0;
         try
         {
-            string csvContent = await GenerateAttendanceCsvAsync(attendanceDate, areaId, subAreaId);
-            int recordCount = Math.Max(0, csvContent.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length - 1);
-
-            string fileName = $"ATTENDANCE_{attendanceDate:yyyyMMdd}_{DateTime.Now:HHmmss}.csv";
-            string targetPath = remotePath.TrimEnd('/') + "/" + fileName;
-
-            var connInfo = new ConnectionInfo(host, port, username,
-                new PasswordAuthenticationMethod(username, password))
-            {
-                Timeout = TimeSpan.FromSeconds(15)
-            };
-
-            using var client = new SftpClient(connInfo);
-            await Task.Run(() => client.Connect());
-
-            if (!client.IsConnected)
-            {
-                return new SftpExportResultDto(false, $"Could not connect to SFTP server at {host}:{port}");
-            }
-
-            // Ensure destination directory exists if nested
-            string dir = Path.GetDirectoryName(targetPath)?.Replace('\\', '/') ?? "/";
-            if (!string.IsNullOrWhiteSpace(dir) && dir != "/" && !client.Exists(dir))
-            {
-                CreateDirectoryRecursively(client, dir);
-            }
-
-            byte[] bytes = Encoding.UTF8.GetBytes(csvContent);
-            using (var stream = new MemoryStream(bytes))
-            {
-                await Task.Run(() => client.UploadFile(stream, targetPath, true));
-            }
-
-            client.Disconnect();
-
-            _logger.LogInformation("Successfully uploaded {Count} attendance records to SFTP {Host}:{Port}{Path}", 
-                recordCount, host, port, targetPath);
-
-            return new SftpExportResultDto(
-                Success: true,
-                Message: $"Successfully transmitted {recordCount} records to SFTP ({fileName})",
-                RemoteFilePath: targetPath,
-                RecordCount: recordCount,
-                TransmittedAt: DateTime.UtcNow
-            );
+            csvContent = await GenerateAttendanceCsvAsync(attendanceDate, areaId, subAreaId);
+            recordCount = Math.Max(0, csvContent.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length - 1);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to export and upload attendance via SFTP to {Host}:{Port}", host, port);
-            return new SftpExportResultDto(
-                Success: false,
-                Message: $"SFTP Transfer Error: {ex.Message}",
-                TransmittedAt: DateTime.UtcNow
-            );
+            await _auditService.LogSftpTransmissionAsync(
+                fileName, attendanceDate, 0, "FAILED", $"CSV Generation Error: {ex.Message}",
+                null, host, port, targetPath, triggerType, userId, username, officerName, role);
+            return new SftpExportResultDto(false, $"Failed to generate attendance CSV: {ex.Message}");
         }
+
+        byte[] bytes = Encoding.UTF8.GetBytes(csvContent);
+        int maxRetries = 3;
+        Exception? lastEx = null;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                var connInfo = new ConnectionInfo(host, port, sftpUser,
+                    new PasswordAuthenticationMethod(sftpUser, password))
+                {
+                    Timeout = TimeSpan.FromSeconds(15)
+                };
+
+                using var client = new SftpClient(connInfo);
+                await Task.Run(() => client.Connect());
+
+                if (!client.IsConnected)
+                {
+                    throw new InvalidOperationException($"Could not establish connection to {host}:{port}");
+                }
+
+                // Ensure destination directory exists if nested
+                string dir = Path.GetDirectoryName(targetPath)?.Replace('\\', '/') ?? "/";
+                if (!string.IsNullOrWhiteSpace(dir) && dir != "/" && !client.Exists(dir))
+                {
+                    CreateDirectoryRecursively(client, dir);
+                }
+
+                // Upload
+                using (var stream = new MemoryStream(bytes))
+                {
+                    await Task.Run(() => client.UploadFile(stream, targetPath, true));
+                }
+
+                // Remote Verification: Check if remote server actually holds the file and verify byte size!
+                long remoteSize = 0;
+                bool verified = false;
+                if (client.Exists(targetPath))
+                {
+                    var remoteAttr = client.Get(targetPath);
+                    remoteSize = remoteAttr.Length;
+                    verified = (remoteSize == bytes.Length);
+                }
+
+                client.Disconnect();
+
+                if (!verified)
+                {
+                    throw new InvalidOperationException($"Remote delivery verification failed: expected {bytes.Length} bytes, remote holds {remoteSize} bytes.");
+                }
+
+                _logger.LogInformation("Successfully uploaded and verified {Count} attendance records ({Bytes} bytes) to SFTP {Host}:{Port}{Path}",
+                    recordCount, remoteSize, host, port, targetPath);
+
+                // Audit Log Success
+                await _auditService.LogSftpTransmissionAsync(
+                    fileName, attendanceDate, recordCount, "DELIVERED_VERIFIED", null,
+                    remoteSize, host, port, targetPath, triggerType, userId, username, officerName, role);
+
+                return new SftpExportResultDto(
+                    Success: true,
+                    Message: $"Delivered & Verified {recordCount} records on SFTP server ({fileName})",
+                    RemoteFilePath: targetPath,
+                    RecordCount: recordCount,
+                    TransmittedAt: DateTime.UtcNow
+                );
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                _logger.LogWarning("SFTP transmission attempt {Attempt}/{Max} failed: {Error}", attempt, maxRetries, ex.Message);
+                if (attempt < maxRetries)
+                {
+                    await Task.Delay(2000 * attempt); // 2s, 4s delay between retries
+                }
+            }
+        }
+
+        // Audit Log Failure
+        string failureMsg = lastEx?.Message ?? "Unknown SFTP failure";
+        await _auditService.LogSftpTransmissionAsync(
+            fileName, attendanceDate, recordCount, "FAILED", failureMsg,
+            null, host, port, targetPath, triggerType, userId, username, officerName, role);
+
+        return new SftpExportResultDto(
+            Success: false,
+            Message: $"SFTP Transfer Failed after {maxRetries} attempts: {failureMsg}",
+            TransmittedAt: DateTime.UtcNow
+        );
     }
 
     private static void CreateDirectoryRecursively(SftpClient client, string path)

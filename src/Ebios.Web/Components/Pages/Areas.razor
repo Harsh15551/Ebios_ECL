@@ -1,6 +1,7 @@
 @page "/areas"
 @rendermode InteractiveServer
 @inject IAreaService AreaService
+@inject UserSessionService UserSession
 
 <PageTitle>ECL - Mining Areas</PageTitle>
 
@@ -261,7 +262,12 @@ else
         try
         {
             var dto = new CreateAreaDto(newAreaCode.Trim().ToUpperInvariant(), newAreaName.Trim(), newAreaHq.Trim());
-            await AreaService.CreateAreaAsync(dto);
+            await AreaService.CreateAreaAsync(
+                dto,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username,
+                UserSession.CurrentUser?.FullName,
+                UserSession.CurrentUser?.Role.ToString());
             successMessage = $"Mining Area '{dto.AreaName}' ({dto.AreaCode}) created successfully.";
             showCreateModal = false;
             await LoadAreasAsync();

@@ -195,8 +195,11 @@ else if (activeTab == "roster")
                 </div>
                 <div class="col-12 col-md-3">
                     <label class="form-label small fw-semibold">Colliery / Sub-Area</label>
-                    <select class="form-select" @bind="filterSubAreaId" @bind:after="LoadRosterAsync">
-                        <option value="0">All Units</option>
+                    <select class="form-select" @bind="filterSubAreaId" @bind:after="LoadRosterAsync" disabled="@UserSession.IsUnitAdmin">
+                        @if (!UserSession.IsUnitAdmin)
+                        {
+                            <option value="0">All Units</option>
+                        }
                         @foreach (var sub in subAreas)
                         {
                             <option value="@sub.Id">@sub.SubAreaName</option>
@@ -575,7 +578,16 @@ else if (activeTab == "roster")
     private async Task LoadMetadataAsync()
     {
         allEmployees = await EmployeeService.GetEmployeesAsync(UserSession.CurrentAreaId, UserSession.CurrentSubAreaId);
-        subAreas = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
+        var subs = await AreaService.GetSubAreasAsync(UserSession.CurrentAreaId);
+        if (UserSession.IsUnitAdmin && UserSession.CurrentSubAreaId.HasValue)
+        {
+            subAreas = subs.Where(s => s.Id == UserSession.CurrentSubAreaId.Value).ToList();
+            filterSubAreaId = UserSession.CurrentSubAreaId.Value;
+        }
+        else
+        {
+            subAreas = subs;
+        }
     }
 
     private async Task SwitchToRosterTab()
@@ -696,7 +708,14 @@ else if (activeTab == "roster")
                     shiftFormIsActive
                 );
 
-                bool ok = await ShiftService.UpdateShiftAsync(editingShiftId, updateDto);
+                bool ok = await ShiftService.UpdateShiftAsync(
+                    editingShiftId, 
+                    updateDto,
+                    performedByUserId: UserSession.CurrentUser?.Id,
+                    performedByUsername: UserSession.CurrentUser?.Username,
+                    performedByOfficerName: UserSession.CurrentUser?.FullName,
+                    performedByRole: UserSession.CurrentUser?.Role.ToString()
+                );
                 if (ok)
                 {
                     successMessage = $"Shift '{shiftFormCode}' updated successfully.";
@@ -724,7 +743,13 @@ else if (activeTab == "roster")
                     shiftFormIsNight
                 );
 
-                bool ok = await ShiftService.CreateShiftAsync(createDto);
+                bool ok = await ShiftService.CreateShiftAsync(
+                    createDto,
+                    performedByUserId: UserSession.CurrentUser?.Id,
+                    performedByUsername: UserSession.CurrentUser?.Username,
+                    performedByOfficerName: UserSession.CurrentUser?.FullName,
+                    performedByRole: UserSession.CurrentUser?.Role.ToString()
+                );
                 if (ok)
                 {
                     successMessage = $"Shift '{shiftFormCode}' created successfully.";
@@ -775,7 +800,13 @@ else if (activeTab == "roster")
         try
         {
             var dto = new AssignRosterDto(assignEmpCode, assignDate, assignShiftCode, UserSession.CurrentUser?.Username ?? "Admin");
-            bool ok = await RosterService.AssignShiftAsync(dto);
+            bool ok = await RosterService.AssignShiftAsync(
+                dto,
+                performedByUserId: UserSession.CurrentUser?.Id,
+                performedByUsername: UserSession.CurrentUser?.Username,
+                performedByOfficerName: UserSession.CurrentUser?.FullName,
+                performedByRole: UserSession.CurrentUser?.Role.ToString()
+            );
             if (ok)
             {
                 successMessage = $"Successfully assigned {assignShiftCode} to {assignEmpCode}.";
@@ -914,7 +945,13 @@ else if (activeTab == "roster")
                 return;
             }
 
-            int imported = await RosterService.BulkAssignRosterAsync(list);
+            int imported = await RosterService.BulkAssignRosterAsync(
+                list,
+                performedByUserId: UserSession.CurrentUser?.Id,
+                performedByUsername: UserSession.CurrentUser?.Username,
+                performedByOfficerName: UserSession.CurrentUser?.FullName,
+                performedByRole: UserSession.CurrentUser?.Role.ToString()
+            );
             successMessage = $"Successfully imported {imported} shift assignments! Any existing attendance punches were retroactively recalculated.";
             showBulkUploadModal = false;
             await LoadRosterAsync();

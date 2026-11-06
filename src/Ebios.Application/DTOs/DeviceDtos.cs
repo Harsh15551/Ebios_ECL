@@ -24,3 +24,11 @@ public record CreateDeviceDto(
     string ActivationCode,
     int SubAreaId
 );
+
+public record UpdateDeviceDto(
+    string DeviceName,
+    string Direction,
+    string DeviceType,
+    string ActivationCode,
+    int SubAreaId
+);
