@@ -29,6 +29,10 @@ essl_logo_1.webp
 # 4. Build Results & Artifacts
 [Bb]in/
 [Oo]bj/
+publish/
+publish/**
+dist/
+dist/**
 [Ll]og/
 [Ll]ogs/
 *.log
