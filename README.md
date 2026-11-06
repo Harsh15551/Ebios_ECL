@@ -1,10 +1,14 @@
 # Eastern Coalfields Limited (ECL) — eBios Portal
 ### Central Biometric Attendance, Workforce Gate Access Control & SAP SFTP Integration System
 
+<p align="center">
+  <img src="src/Ebios.Web/wwwroot/images/essl_logo.webp" alt="eSSL Security Logo" width="220" />
+</p>
+
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Blazor](https://img.shields.io/badge/Blazor-Interactive%20Server-blue.svg)](https://dotnet.microsoft.com/apps/aspnet/web-apps/blazor)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-336791.svg)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-Proprietary%20ECL-red.svg)]()
+[![License](https://img.shields.io/badge/License-Proprietary%20--%20eSSL%20Security-005691.svg)]()
 
 Enterprise biometric attendance, turnstile gate access control, shift scheduling, and daily SAP muster roll synchronization system designed for **Eastern Coalfields Limited (ECL)**, a subsidiary of Coal India Limited. The portal connects physical turnstiles, face recognition and fingerprint attendance machines across all **13 ECL Mining Areas** and colliery pits with central eBioServer SOAP WebServices and SAP ERP.
 
@@ -245,4 +249,6 @@ This generates a public URL (e.g. `https://ecl-ebios-test.loca.lt`).
 ## 📄 License & Confidentiality
 
 **Confidential & Proprietary.**  
-Developed for **Eastern Coalfields Limited (ECL)** / Coal India Limited. All rights reserved. Unauthorized copying, distribution, or decompilation of this software via any medium is strictly prohibited.
+Copyright © eSSL Security (Enterprise Software Solutions Lab). All Rights Reserved.  
+Customized and developed for **Eastern Coalfields Limited (ECL)** / Coal India Limited.  
+Unauthorized copying, distribution, or decompilation of this software via any medium is strictly prohibited.

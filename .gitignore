@@ -24,6 +24,7 @@ scratch/**
 scratch_photos/
 scratch_photos/**
 bulk_regularization_*.csv
+essl_logo_1.webp
 
 # 4. Build Results & Artifacts
 [Bb]in/
