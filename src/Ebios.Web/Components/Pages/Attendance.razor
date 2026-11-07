@@ -116,9 +116,16 @@
     <li class="nav-item">
         <button class="nav-link @(activeMainTab == "punches" ? "active" : "")" @onclick="@(() => SwitchTab("punches"))">
             <i class="bi bi-broadcast me-1"></i> ⚡ Raw Biometric Stream (@(logs.Count))
-            @if (flaggedCount > 0)
+            @{
+                int streamFlagged = logs.Count(l => l.IsFlagged || l.Status == "Flagged");
+            }
+            @if (streamFlagged > 0)
             {
-                <span class="badge bg-warning text-dark ms-1">@flaggedCount Flagged</span>
+                <span class="badge bg-warning text-dark ms-1">@streamFlagged Flagged</span>
+            }
+            else if (flaggedCount > 0)
+            {
+                <span class="badge bg-warning text-dark ms-1">@flaggedCount Pending</span>
             }
         </button>
     </li>
@@ -189,37 +196,11 @@
         </div>
     </div>
 
-    <!-- Muster Roll Filter Bar -->
-    @if (musterList.Any(m => m.IsFlagged))
-    {
-        var flaggedMusterCount = musterList.Count(m => m.IsFlagged);
-        <div class="alert alert-warning shadow-sm d-flex align-items-center justify-content-between mb-3 py-2 px-3">
-            <div class="d-flex align-items-center gap-2">
-                <span class="fs-4">🚩</span>
-                <div>
-                    <strong class="d-block">@flaggedMusterCount Flagged (Unregistered Worker) Record(s) Detected in Daily Report</strong>
-                    <span class="small text-muted">Workers have swiped on turnstiles whose employee profiles are not yet onboarded.</span>
-                </div>
-            </div>
-            <div class="d-flex gap-2">
-                @if (musterFlagFilter == "Flagged")
-                {
-                    <button class="btn btn-outline-dark btn-sm fw-semibold" @onclick="@(() => musterFlagFilter = "All")">
-                        Show All Workers
-                    </button>
-                }
-                else
-                {
-                    <button class="btn btn-warning btn-sm fw-bold shadow-sm" @onclick="@(() => musterFlagFilter = "Flagged")">
-                        🚩 Filter Flagged Only (@flaggedMusterCount)
-                    </button>
-                }
-            </div>
-        </div>
-    }
+
 
     <div class="card shadow-sm mb-4">
         <div class="card-body">
+            <!-- Row 1: Dates, Jurisdiction, Shift Category & Shifts, Timing Anomaly -->
             <div class="row g-2 align-items-end">
                 <div class="col-6 col-md-2">
                     <label class="form-label small fw-semibold">From Date</label>
@@ -245,19 +226,43 @@
                     </select>
                 </div>
 
-                <div class="col-6 col-md-1">
-                    <label class="form-label small fw-semibold">Shift</label>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold">Shift Type</label>
+                    <select class="form-select form-select-sm" @bind="musterShiftCategory">
+                        <option value="All">All Shift Types</option>
+                        <option value="Day">☀️ Day Shifts Only</option>
+                        <option value="Night">🌙 Night Shifts (Cross-Midnight)</option>
+                    </select>
+                </div>
+
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold">Specific Shift</label>
                     <select class="form-select form-select-sm" @bind="musterShiftCode" @bind:after="LoadMusterRollAsync">
                         <option value="All">All Shifts</option>
                         @foreach (var s in masterShifts)
                         {
-                            <option value="@s.ShiftCode">@s.ShiftCode</option>
+                            <option value="@s.ShiftCode">@s.ShiftCode (@s.StartTime.ToString(@"hh\:mm")-@s.EndTime.ToString(@"hh\:mm"))</option>
                         }
                     </select>
                 </div>
 
-                <div class="col-6 col-md-1">
-                    <label class="form-label small fw-semibold">Status</label>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-semibold">Timing Anomaly</label>
+                    <select class="form-select form-select-sm" @bind="musterTimingAnomaly">
+                        <option value="All">All Timings</option>
+                        <option value="EarlyIn">🟢 Early IN (&gt;30m early)</option>
+                        <option value="LateIn">⚠️ Late IN (Grace exceeded)</option>
+                        <option value="EarlyOut">⚠️ Early OUT (Before shift end)</option>
+                        <option value="LateOut">🟣 Late OUT / Overtime (OT &gt; 0)</option>
+                        <option value="OnTime">✅ Strictly On-Time</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Row 2: Status, Flag Status, Search -->
+            <div class="row g-2 align-items-end mt-2 pt-2 border-top">
+                <div class="col-6 col-md-3">
+                    <label class="form-label small fw-semibold">Muster Status</label>
                     <select class="form-select form-select-sm" @bind="musterStatus" @bind:after="LoadMusterRollAsync">
                         <option value="All">All Statuses</option>
                         <option value="Present">Present</option>
@@ -268,8 +273,8 @@
                     </select>
                 </div>
 
-                <div class="col-6 col-md-2">
-                    <label class="form-label small fw-semibold">Flag Status</label>
+                <div class="col-6 col-md-3">
+                    <label class="form-label small fw-semibold">Badge Status</label>
                     <select class="form-select form-select-sm" @bind="musterFlagFilter">
                         <option value="All">All Workers</option>
                         <option value="Flagged">🚩 Flagged Only (Unregistered)</option>
@@ -277,9 +282,9 @@
                     </select>
                 </div>
 
-                <div class="col-12 col-md-2">
-                    <label class="form-label small fw-semibold">Search</label>
-                    <input type="text" class="form-control form-control-sm" placeholder="ID, Name, Machine..." @bind="musterSearchTerm" @bind:event="oninput" />
+                <div class="col-12 col-md-6">
+                    <label class="form-label small fw-semibold">Search Worker / Machine</label>
+                    <input type="text" class="form-control form-control-sm" placeholder="Search ID, Name, Machine, Shift..." @bind="musterSearchTerm" @bind:event="oninput" />
                 </div>
             </div>
         </div>
@@ -362,7 +367,13 @@
                                     <span class="text-truncate d-inline-block" style="max-width: 150px;" title="@m.SubAreaName">@m.SubAreaName</span>
                                 </td>
                                 <td class="text-nowrap">
-                                    <span class="badge bg-dark font-monospace">@m.ShiftCode</span>
+                                    @{
+                                        var sm = masterShifts.FirstOrDefault(s => s.ShiftCode == m.ShiftCode);
+                                        bool isNightShift = sm != null && (sm.IsNightShift || sm.EndTime < sm.StartTime);
+                                    }
+                                    <span class="badge @(isNightShift ? "text-white" : "bg-dark") font-monospace" style="@(isNightShift ? "background-color: #3730a3;" : "")" title="@(isNightShift ? "Night Shift (Cross-Midnight)" : "Day Shift")">
+                                        @(isNightShift ? "🌙 " : "☀️ ")@m.ShiftCode
+                                    </span>
                                     @if (m.RosterStatus == "Auto-Matched")
                                     {
                                         <span class="badge bg-light text-muted border ms-1" title="Auto-matched by Shift Window">Auto</span>
@@ -388,6 +399,10 @@
                                     {
                                         <div>
                                             <span class="fw-bold text-danger font-monospace">@m.LastOutTime.Value.ToString("HH:mm:ss")</span>
+                                            @if (m.FirstInTime.HasValue && m.LastOutTime.Value.Date > m.FirstInTime.Value.Date)
+                                            {
+                                                <span class="badge bg-purple-subtle text-purple border ms-1" style="font-size: 0.68rem;" title="Exit punch recorded on next calendar day (@m.LastOutTime.Value.ToString("dd-MM-yyyy"))">+1 Day</span>
+                                            }
                                             <small class="text-muted d-block text-truncate" style="max-width: 130px;" title="Machine: @m.OutSerialNumber">
                                                 @(m.OutDeviceName ?? m.OutSerialNumber ?? "Terminal")
                                             </small>
@@ -542,9 +557,9 @@ else
         <div class="col-12 col-sm-6 col-md-3">
             <div class="card h-100 border-start border-success border-4 shadow-sm">
                 <div class="card-body">
-                    <div class="text-muted small fw-semibold text-uppercase">Verified Workers</div>
+                    <div class="text-muted small fw-semibold text-uppercase">Verified Punches</div>
                     <div class="h3 fw-bold mb-0 text-success">@logs.Count(l => l.Status == "Verified")</div>
-                    <small class="text-muted">Recognized employees</small>
+                    <small class="text-muted">Recognized scans (@logs.Where(l => l.Status == "Verified").Select(l => l.EmpCode).Distinct().Count() workers)</small>
                 </div>
             </div>
         </div>
@@ -553,8 +568,8 @@ else
             <div class="card h-100 border-start border-warning border-4 shadow-sm">
                 <div class="card-body">
                     <div class="text-muted small fw-semibold text-uppercase">Flagged Punches</div>
-                    <div class="h3 fw-bold mb-0 text-warning">@flaggedCount</div>
-                    <small class="text-muted">Unregistered worker codes</small>
+                    <div class="h3 fw-bold mb-0 text-warning">@logs.Count(l => l.IsFlagged || l.Status == "Flagged")</div>
+                    <small class="text-muted">Unregistered in view (@flaggedCount all-time)</small>
                 </div>
             </div>
         </div>
@@ -562,7 +577,7 @@ else
         <div class="col-12 col-sm-6 col-md-3">
             <div class="card h-100 border-start border-secondary border-4 shadow-sm">
                 <div class="card-body">
-                    <div class="text-muted small fw-semibold text-uppercase">Dismissed</div>
+                    <div class="text-muted small fw-semibold text-uppercase">Dismissed Punches</div>
                     <div class="h3 fw-bold mb-0 text-secondary">@logs.Count(l => l.Status == "Dismissed")</div>
                     <small class="text-muted">Visitors or test scans</small>
                 </div>
@@ -570,22 +585,7 @@ else
         </div>
     </div>
 
-    <!-- Flagged Alert Banner -->
-    @if (flaggedCount > 0)
-    {
-        <div class="alert alert-warning shadow-sm d-flex align-items-center justify-content-between mb-4">
-            <div class="d-flex align-items-center">
-                <span class="fs-4 me-3">⚠️</span>
-                <div>
-                    <strong class="d-block">Action Required: @flaggedCount Flagged / Unrecognized Punches Detected</strong>
-                    <span class="small text-muted">Workers have swiped on colliery turnstiles whose employee records are not yet onboarded. You can onboard them or dismiss invalid scans.</span>
-                </div>
-            </div>
-            <button class="btn btn-warning btn-sm fw-bold px-3" @onclick="@(() => statusFilter = "Flagged")">
-                Review Flagged Punches
-            </button>
-        </div>
-    }
+
 
     <!-- Filters Bar -->
     <div class="card shadow-sm mb-4">
@@ -1015,8 +1015,10 @@ else
                     </div>
 
                     <div class="alert alert-info py-2 small mb-3">
-                        <strong>Expected Format:</strong> <code>EmpCode, Date(YYYY-MM-DD), InTime(HH:mm), OutTime(HH:mm), Reason</code><br />
-                        <span class="text-muted">Tip: Leave InTime or OutTime empty to retain existing turnstile punches (e.g. <code>ECL-7001,2026-11-04,,16:30,Missed OUT punch</code>). Delimiters: comma (<code>,</code>) or tab.</span>
+                        <strong>Supported Formats:</strong><br />
+                        &bull; <strong>Standard Shift:</strong> <code>EmpCode, Date, InTime, OutTime, Reason</code> (e.g. <code>ECL-7001, 2026-11-04, 08:30, 16:30, Power failure</code>)<br />
+                        &bull; <strong>Cross-Midnight Night Shift:</strong> <code>EmpCode, DateIn, InTime, DateOut, OutTime, Reason</code> (e.g. <code>ECL-7001, 2026-11-06, 22:00, 2026-11-07, 06:00, Night shift turnstile offline</code>)<br />
+                        <span class="text-muted">Tip: Leave InTime or OutTime empty to retain existing turnstile punches (e.g. <code>ECL-7001, 2026-11-04, , 17:00, Missed OUT punch</code> preserves existing 8 AM punch).</span>
                     </div>
 
                     <!-- Direct Textarea -->
@@ -1102,10 +1104,37 @@ else
                                 <span class="small font-monospace text-dark ms-1">@sftpUserPreview &rarr; @sftpDirPreview</span>
                             </div>
                             <div class="col-md-12">
-                                <span class="small text-muted">Scheduled Trigger:</span>
-                                <span class="badge bg-success-subtle text-success border border-success-subtle ms-1">
-                                    <i class="bi bi-clock me-1"></i> Daily at @sftpScheduleTimePreview (Auto 3-Time Retry on failure)
-                                </span>
+                                <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                                    <div>
+                                        <span class="small text-muted">Scheduled Trigger:</span>
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle ms-1">
+                                            <i class="bi bi-clock me-1"></i> Daily at @sftpScheduleTimePreview (Auto 3-Time Retry on failure)
+                                        </span>
+                                    </div>
+                                    @if (UserSession.IsSuperAdmin || UserSession.IsAreaAdmin)
+                                    {
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="small fw-semibold text-dark">Schedule Time:</span>
+                                            <input type="text" class="form-control form-control-sm font-monospace text-center" style="width: 85px;" placeholder="23:45" @bind="editingSftpScheduleTime" disabled="@isSavingScheduleTime" />
+                                            <button type="button" class="btn btn-sm btn-primary py-1 px-2" @onclick="SaveSftpScheduleTimeAsync" disabled="@isSavingScheduleTime" title="Update daily automated transmission time">
+                                                @if (isSavingScheduleTime)
+                                                {
+                                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                                }
+                                                else
+                                                {
+                                                    <span><i class="bi bi-check2 me-1"></i>Set Time</span>
+                                                }
+                                            </button>
+                                        </div>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrEmpty(sftpScheduleTimeMessage))
+                                {
+                                    <div class="alert @(sftpScheduleTimeSuccess ? "alert-success" : "alert-danger") py-1 px-2 small mt-2 mb-0">
+                                        @(sftpScheduleTimeSuccess ? "✅ " : "⚠️ ") @sftpScheduleTimeMessage
+                                    </div>
+                                }
                             </div>
                         </div>
                     </div>
@@ -1377,6 +1406,8 @@ else
     private string musterShiftCode = "All";
     private string musterStatus = "All";
     private string musterFlagFilter = "All";
+    private string musterShiftCategory = "All";
+    private string musterTimingAnomaly = "All";
     private string musterSearchTerm = string.Empty;
     private bool isMusterLoading = false;
     private bool isRecalculating = false;
@@ -1424,6 +1455,10 @@ else
     private string sftpUserPreview = "tester";
     private string sftpDirPreview = "/";
     private string sftpScheduleTimePreview = "23:45";
+    private string editingSftpScheduleTime = "23:45";
+    private bool isSavingScheduleTime = false;
+    private string? sftpScheduleTimeMessage;
+    private bool sftpScheduleTimeSuccess;
 
     private LastSftpStatusDto? lastSftpStatus;
     private List<AuditLogDto> recentSftpLogs = new();
@@ -1446,10 +1481,45 @@ else
         if (sftpPortPreview <= 0) sftpPortPreview = 22;
         sftpUserPreview = Environment.GetEnvironmentVariable("SFTP_USERNAME") ?? Configuration["SftpServer:UserName"] ?? "tester";
         sftpDirPreview = Environment.GetEnvironmentVariable("SFTP_REMOTE_PATH") ?? Configuration["SftpServer:RemotePath"] ?? "/";
-        sftpScheduleTimePreview = Environment.GetEnvironmentVariable("SFTP_SCHEDULE_TIME") ?? Configuration["SftpServer:DailyScheduledTime"] ?? "23:45";
+        sftpScheduleTimePreview = SftpService.GetDailyScheduleTime();
+        editingSftpScheduleTime = sftpScheduleTimePreview;
+        sftpScheduleTimeMessage = null;
         isSftpModalOpen = true;
 
         await LoadSftpAuditDataAsync();
+    }
+
+    private async Task SaveSftpScheduleTimeAsync()
+    {
+        isSavingScheduleTime = true;
+        sftpScheduleTimeMessage = null;
+        try
+        {
+            var (success, msg) = await SftpService.SetDailyScheduleTimeAsync(
+                editingSftpScheduleTime,
+                UserSession.CurrentUser?.Id,
+                UserSession.CurrentUser?.Username ?? "admin",
+                UserSession.CurrentUser?.FullName ?? "Administrator",
+                UserSession.CurrentUser?.Role.ToString() ?? "SuperAdmin");
+
+            sftpScheduleTimeSuccess = success;
+            sftpScheduleTimeMessage = msg;
+            if (success)
+            {
+                sftpScheduleTimePreview = SftpService.GetDailyScheduleTime();
+                editingSftpScheduleTime = sftpScheduleTimePreview;
+                await LoadSftpAuditDataAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            sftpScheduleTimeSuccess = false;
+            sftpScheduleTimeMessage = ex.Message;
+        }
+        finally
+        {
+            isSavingScheduleTime = false;
+        }
     }
 
     private async Task LoadSftpAuditDataAsync()
@@ -1648,6 +1718,47 @@ else
         {
             var list = musterList.AsEnumerable();
 
+            // 1. Shift Category Filter (Day vs Night)
+            if (musterShiftCategory == "Day")
+            {
+                list = list.Where(m =>
+                {
+                    var s = masterShifts.FirstOrDefault(x => x.ShiftCode == m.ShiftCode);
+                    return s == null || (!s.IsNightShift && s.EndTime >= s.StartTime);
+                });
+            }
+            else if (musterShiftCategory == "Night")
+            {
+                list = list.Where(m =>
+                {
+                    var s = masterShifts.FirstOrDefault(x => x.ShiftCode == m.ShiftCode);
+                    return s != null && (s.IsNightShift || s.EndTime < s.StartTime);
+                });
+            }
+
+            // 2. Timing Anomaly Filter (Early In, Late In, Early Out, Late Out/OT, On-Time)
+            if (musterTimingAnomaly == "EarlyIn")
+            {
+                list = list.Where(m => m.EarlyInMinutes > 0);
+            }
+            else if (musterTimingAnomaly == "LateIn")
+            {
+                list = list.Where(m => m.LateByMinutes > 0);
+            }
+            else if (musterTimingAnomaly == "EarlyOut")
+            {
+                list = list.Where(m => m.EarlyExitMinutes > 0);
+            }
+            else if (musterTimingAnomaly == "LateOut")
+            {
+                list = list.Where(m => m.OvertimeMinutes > 0 || (m.LastOutTime.HasValue && m.TotalWorkHours > 8.0));
+            }
+            else if (musterTimingAnomaly == "OnTime")
+            {
+                list = list.Where(m => m.LateByMinutes == 0 && m.EarlyInMinutes == 0 && m.EarlyExitMinutes == 0 && m.Status.StartsWith("Present"));
+            }
+
+            // 3. Flag Status Filter
             if (musterFlagFilter == "Flagged")
             {
                 list = list.Where(m => m.IsFlagged);
@@ -1657,17 +1768,19 @@ else
                 list = list.Where(m => !m.IsFlagged);
             }
 
+            // 4. Search Term Filter
             if (!string.IsNullOrWhiteSpace(musterSearchTerm))
             {
                 string s = musterSearchTerm.Trim();
                 list = list.Where(m =>
                     m.EmpCode.Contains(s, StringComparison.OrdinalIgnoreCase) ||
                     (m.EmployeeName != null && m.EmployeeName.Contains(s, StringComparison.OrdinalIgnoreCase)) ||
+                    (m.ShiftCode != null && m.ShiftCode.Contains(s, StringComparison.OrdinalIgnoreCase)) ||
                     (m.InDeviceName != null && m.InDeviceName.Contains(s, StringComparison.OrdinalIgnoreCase)) ||
                     (m.OutDeviceName != null && m.OutDeviceName.Contains(s, StringComparison.OrdinalIgnoreCase)));
             }
 
-            return list.ToList();
+            return list.OrderByDescending(m => m.AttendanceDate).ThenBy(m => m.EmpCode).ToList();
         }
     }
 
@@ -2128,55 +2241,103 @@ else
                 if (parts.Length < 2) continue;
 
                 string code = parts[0].Trim();
-                if (code.Equals("EmpCode", StringComparison.OrdinalIgnoreCase) || code.Equals("Worker", StringComparison.OrdinalIgnoreCase))
+                if (code.Equals("EmpCode", StringComparison.OrdinalIgnoreCase) || 
+                    code.Equals("Worker", StringComparison.OrdinalIgnoreCase) ||
+                    code.StartsWith("#"))
                 {
                     continue;
                 }
 
-                if (!DateTime.TryParse(parts[1].Trim(), out var targetDate))
-                {
-                    continue;
-                }
+                // Check if row is Format B: EmpCode, DateIn, InTime, DateOut, OutTime, Reason[, ShiftCode]
+                // Detected when parts has >= 5 columns and parts[3] parses as a full date (contains date separator)
+                bool isTwoDateRow = parts.Length >= 5 &&
+                                    (parts[3].Contains('-') || parts[3].Contains('/') || parts[3].Contains('.')) &&
+                                    DateTime.TryParse(parts[3].Trim(), out _);
 
+                DateTime targetDate;
                 DateTime? inTime = null;
-                if (parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]))
+                DateTime? outTime = null;
+                string reason = "Bulk Administrative Regularization";
+                string? shiftCode = null;
+
+                if (isTwoDateRow)
                 {
-                    string rawIn = parts[2].Trim();
-                    if (TimeSpan.TryParse(rawIn, out var tsIn))
+                    // Format B: EmpCode, DateIn, InTime, DateOut, OutTime, Reason
+                    if (!DateTime.TryParse(parts[1].Trim(), out var dateIn)) continue;
+                    targetDate = dateIn;
+
+                    if (!string.IsNullOrWhiteSpace(parts[2]))
                     {
-                        inTime = targetDate.Date.Add(tsIn);
+                        string rawIn = parts[2].Trim();
+                        if (TimeSpan.TryParse(rawIn, out var tsIn)) inTime = dateIn.Date.Add(tsIn);
+                        else if (DateTime.TryParse(rawIn, out var dtIn)) inTime = dtIn;
                     }
-                    else if (DateTime.TryParse(rawIn, out var dtIn))
+
+                    if (DateTime.TryParse(parts[3].Trim(), out var dateOut) && parts.Length >= 5 && !string.IsNullOrWhiteSpace(parts[4]))
                     {
-                        inTime = dtIn;
+                        string rawOut = parts[4].Trim();
+                        if (TimeSpan.TryParse(rawOut, out var tsOut)) outTime = dateOut.Date.Add(tsOut);
+                        else if (DateTime.TryParse(rawOut, out var dtOut)) outTime = dtOut;
+                    }
+
+                    if (parts.Length >= 6 && !string.IsNullOrWhiteSpace(parts[5]))
+                    {
+                        reason = parts[5].Trim();
+                    }
+
+                    if (parts.Length >= 7 && !string.IsNullOrWhiteSpace(parts[6]))
+                    {
+                        shiftCode = parts[6].Trim();
                     }
                 }
-
-                DateTime? outTime = null;
-                if (parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]))
+                else
                 {
-                    string rawOut = parts[3].Trim();
-                    if (TimeSpan.TryParse(rawOut, out var tsOut))
+                    // Format A: EmpCode, Date, InTime, OutTime, Reason
+                    if (!DateTime.TryParse(parts[1].Trim(), out targetDate))
                     {
-                        outTime = targetDate.Date.Add(tsOut);
-                        if (inTime.HasValue && outTime < inTime)
+                        continue;
+                    }
+
+                    if (parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]))
+                    {
+                        string rawIn = parts[2].Trim();
+                        if (TimeSpan.TryParse(rawIn, out var tsIn))
                         {
-                            outTime = outTime.Value.AddDays(1);
+                            inTime = targetDate.Date.Add(tsIn);
+                        }
+                        else if (DateTime.TryParse(rawIn, out var dtIn))
+                        {
+                            inTime = dtIn;
                         }
                     }
-                    else if (DateTime.TryParse(rawOut, out var dtOut))
+
+                    if (parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]))
                     {
-                        outTime = dtOut;
+                        string rawOut = parts[3].Trim();
+                        if (TimeSpan.TryParse(rawOut, out var tsOut))
+                        {
+                            outTime = targetDate.Date.Add(tsOut);
+                            if (inTime.HasValue && outTime < inTime)
+                            {
+                                outTime = outTime.Value.AddDays(1);
+                            }
+                        }
+                        else if (DateTime.TryParse(rawOut, out var dtOut))
+                        {
+                            outTime = dtOut;
+                        }
+                    }
+
+                    if (parts.Length >= 5 && !string.IsNullOrWhiteSpace(parts[4]))
+                    {
+                        reason = parts[4].Trim();
+                    }
+
+                    if (parts.Length >= 6 && !string.IsNullOrWhiteSpace(parts[5]))
+                    {
+                        shiftCode = parts[5].Trim();
                     }
                 }
-
-                string reason = parts.Length >= 5 && !string.IsNullOrWhiteSpace(parts[4])
-                    ? parts[4].Trim()
-                    : "Bulk Administrative Regularization";
-
-                string? shiftCode = parts.Length >= 6 && !string.IsNullOrWhiteSpace(parts[5])
-                    ? parts[5].Trim()
-                    : null;
 
                 entries.Add(new BulkRegularizeEntryDto(code, targetDate, inTime, outTime, reason, shiftCode));
             }

@@ -37,9 +37,9 @@ public class SftpAttendanceSchedulerWorker : BackgroundService
 
                 if (isEnabled)
                 {
-                    string scheduledTime = Environment.GetEnvironmentVariable("SFTP_SCHEDULE_TIME")
-                                           ?? _configuration["SftpServer:DailyScheduledTime"]
-                                           ?? "23:45";
+                    using var scope = _serviceProvider.CreateScope();
+                    var sftpService = scope.ServiceProvider.GetRequiredService<ISftpAttendanceService>();
+                    string scheduledTime = sftpService.GetDailyScheduleTime();
 
                     DateTime now = DateTime.Now;
                     string currentTime = now.ToString("HH:mm");
@@ -49,9 +49,6 @@ public class SftpAttendanceSchedulerWorker : BackgroundService
                     {
                         _logger.LogInformation("SFTP Attendance Scheduled trigger firing for date {Date} at {Time}", 
                             now.Date.ToString("yyyy-MM-dd"), currentTime);
-
-                        using var scope = _serviceProvider.CreateScope();
-                        var sftpService = scope.ServiceProvider.GetRequiredService<ISftpAttendanceService>();
 
                         var result = await sftpService.ExportAndUploadDailyAttendanceAsync(
                             now.Date,

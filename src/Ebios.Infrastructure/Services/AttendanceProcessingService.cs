@@ -53,10 +53,10 @@ public class AttendanceProcessingService : IAttendanceProcessingService
             var nightShift = shifts.FirstOrDefault(s => s.Id == yesterdayNightSummary.ShiftId) 
                           ?? shifts.FirstOrDefault(s => s.ShiftCode == yesterdayNightSummary.ShiftCode);
 
-            if (nightShift != null && nightShift.IsNightShift)
+            if (nightShift != null && (nightShift.IsNightShift || nightShift.EndTime < nightShift.StartTime))
             {
-                // Any subsequent morning punch within 14 hours of entry is the exit of yesterday's night shift
-                if (punchTime > yesterdayNightSummary.FirstInTime && punchTime <= yesterdayNightSummary.FirstInTime.Value.AddHours(14))
+                // Any subsequent morning punch within 16 hours of entry is the exit of yesterday's night shift
+                if (punchTime > yesterdayNightSummary.FirstInTime && punchTime <= yesterdayNightSummary.FirstInTime.Value.AddHours(16))
                 {
                     // This is the EXIT of yesterday's night shift!
                     yesterdayNightSummary.LastOutTime = punchTime;
@@ -261,9 +261,10 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 newSummary.LateByMinutes = (int)Math.Round(offset);
             }
 
-            if (offset < -30)
+            double earlyBoundary = (resolvedShift.IsNightShift || resolvedShift.EndTime < resolvedShift.StartTime) ? -90 : -60;
+            if (offset < earlyBoundary)
             {
-                newSummary.EarlyInMinutes = (int)Math.Round(-30 - offset);
+                newSummary.EarlyInMinutes = (int)Math.Round(-earlyBoundary - offset);
             }
             else
             {
@@ -325,9 +326,10 @@ public class AttendanceProcessingService : IAttendanceProcessingService
             summary.LateByMinutes = (int)Math.Round(inOffset);
         }
 
-        if (inOffset < -30)
+        double earlyBoundary = (shift.IsNightShift || shift.EndTime < shift.StartTime) ? -90 : -60;
+        if (inOffset < earlyBoundary)
         {
-            summary.EarlyInMinutes = (int)Math.Round(-30 - inOffset);
+            summary.EarlyInMinutes = (int)Math.Round(-earlyBoundary - inOffset);
         }
         else
         {
@@ -835,7 +837,8 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 double offset = GetCircularOffsetMinutes(p.LogDate.TimeOfDay, shift.StartTime);
                 int grace = shift.GraceMinutes > 0 ? shift.GraceMinutes : 30;
                 summary.LateByMinutes = offset > grace ? (int)Math.Round(offset) : 0;
-                summary.EarlyInMinutes = offset < -30 ? (int)Math.Round(-30 - offset) : 0;
+                double earlyBoundary = (shift.IsNightShift || shift.EndTime < shift.StartTime) ? -90 : -60;
+                summary.EarlyInMinutes = offset < earlyBoundary ? (int)Math.Round(-earlyBoundary - offset) : 0;
                 summary.Status = summary.LateByMinutes > 0 ? "Single Punch (Late)" : (summary.EarlyInMinutes > 0 ? "Single Punch (Early)" : "Single Punch");
             }
             else
@@ -1127,13 +1130,21 @@ public class AttendanceProcessingService : IAttendanceProcessingService
 
         var evaluated = activeShifts.Select(s =>
         {
+            bool isCrossMidnightOrNight = s.IsNightShift || s.EndTime < s.StartTime;
             double offset = GetCircularOffsetMinutes(punchTimeOfDay, s.StartTime);
-            // Employee-favorable window: 35 minutes before start (allowing 5m colliery gate leeway) to 90 minutes after start
-            bool inWindow = offset >= -35 && offset <= 90;
+            
+            // Colliery shift reporting window:
+            // For night/cross-midnight shifts: 90 mins early (lamp room preparation) to 120 mins late
+            // For standard day shifts: 60 mins early to 90 mins late
+            double earlyWindow = isCrossMidnightOrNight ? -90 : -60;
+            double lateWindow = isCrossMidnightOrNight ? 120 : 90;
+            bool inWindow = offset >= earlyWindow && offset <= lateWindow;
 
             int grace = s.GraceMinutes > 0 ? s.GraceMinutes : 30;
             int lateMinutes = offset > grace ? (int)Math.Round(offset) : 0;
-            int earlyMinutes = offset < -30 ? (int)Math.Round(-30 - offset) : 0;
+            
+            double earlyBoundary = isCrossMidnightOrNight ? -90 : -60;
+            int earlyMinutes = offset < earlyBoundary ? (int)Math.Round(-earlyBoundary - offset) : 0;
 
             double outDiff = 0;
             if (outTimeOfDay.HasValue)
@@ -1147,7 +1158,7 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 InWindow = inWindow,
                 LateMinutes = lateMinutes,
                 EarlyMinutes = earlyMinutes,
-                IsOnTime = lateMinutes == 0,
+                IsOnTime = lateMinutes == 0 && earlyMinutes == 0,
                 IsReportingBeforeStart = offset <= 0,
                 AbsOffset = Math.Abs(offset),
                 OutDiff = outDiff,
@@ -1162,11 +1173,11 @@ public class AttendanceProcessingService : IAttendanceProcessingService
         }
 
         var best = candidates
-            .OrderBy(c => c.LateMinutes)
-            .ThenBy(c => outTimeOfDay.HasValue ? c.OutDiff : 0)
-            .ThenBy(c => c.IsOnTime ? (c.IsReportingBeforeStart ? 0 : 1) : 0)
-            .ThenBy(c => c.EarlyMinutes)
+            .OrderBy(c => c.InWindow ? 0 : 1)
+            .ThenBy(c => outTimeOfDay.HasValue ? (c.AbsOffset + c.OutDiff) : 0)
             .ThenBy(c => c.AbsOffset)
+            .ThenBy(c => c.LateMinutes)
+            .ThenBy(c => c.EarlyMinutes)
             .ThenBy(c => c.IsGeneralPreference ? 0 : 1)
             .ThenBy(c => c.Shift.ShiftCode)
             .FirstOrDefault();

@@ -162,6 +162,22 @@ else
         {
             Navigation.NavigateTo("login");
         }
+        else
+        {
+            UserSession.RecordActivity();
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!UserSession.IsAuthenticated)
+        {
+            Navigation.NavigateTo("login?reason=idle");
+        }
+        else
+        {
+            UserSession.RecordActivity();
+        }
     }
 
     private void OpenChangePasswordModal()

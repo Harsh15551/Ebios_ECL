@@ -15,5 +15,12 @@ public interface ISftpAttendanceService
         string officerName = "System Worker",
         string role = "System");
     Task<(bool Success, string Message)> TestConnectionAsync();
+    string GetDailyScheduleTime();
+    Task<(bool Success, string Message)> SetDailyScheduleTimeAsync(
+        string newScheduleTime,
+        int? userId = null,
+        string username = "System",
+        string officerName = "System Worker",
+        string role = "System");
 }
 

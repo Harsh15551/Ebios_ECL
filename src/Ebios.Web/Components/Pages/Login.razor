@@ -10,8 +10,8 @@
 <div class="card shadow-lg border-0 rounded-4 overflow-hidden" style="max-width: 480px; width: 100%; margin: auto;">
     <!-- Header Banner -->
     <div class="bg-dark text-white p-4 text-center border-bottom border-warning border-4">
-        <div class="bg-white rounded-3 px-3 py-2 d-inline-block mb-3 shadow-sm">
-            <img src="images/essl_logo.webp" alt="eSSL Security" style="height: 42px; object-fit: contain;" />
+        <div class="bg-white rounded-3 px-4 py-2 d-inline-block mb-3 shadow-sm">
+            <img src="images/essl_logo.webp" alt="eSSL Security" style="height: 56px; max-width: 180px; object-fit: contain;" />
         </div>
         <h3 class="h4 fw-bold mb-1">Eastern Coalfields Limited</h3>
         <p class="text-white-50 small mb-0">Central Biometric Attendance &amp; Access Control Portal</p>
@@ -397,9 +397,16 @@
     private string? adminEmergencyError;
     private bool isAdminEmergencyLoading = false;
 
+    [SupplyParameterFromQuery]
+    public string? Reason { get; set; }
+
     protected override void OnInitialized()
     {
-        if (UserSession.IsAuthenticated)
+        if (Reason == "idle")
+        {
+            UserSession.Logout();
+        }
+        else if (UserSession.IsAuthenticated)
         {
             Navigation.NavigateTo("");
         }

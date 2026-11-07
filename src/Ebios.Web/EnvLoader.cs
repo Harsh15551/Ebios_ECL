@@ -10,38 +10,55 @@ public static class EnvLoader
     {
         try
         {
-            searchDirectory ??= Directory.GetCurrentDirectory();
-
             string? envFilePath = null;
-            var dir = new DirectoryInfo(searchDirectory);
 
-            // Walk upwards until we find .env or hit the root
-            while (dir != null)
+            // 1. First priority: Check the application's base directory (where Ebios.Web.dll is deployed)
+            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            if (!string.IsNullOrEmpty(baseDir))
             {
-                var candidate = Path.Combine(dir.FullName, ".env");
-                if (File.Exists(candidate))
-                {
-                    envFilePath = candidate;
-                    break;
-                }
-                dir = dir.Parent;
-            }
-
-            // Fallback: check base application directory
-            if (envFilePath == null)
-            {
-                var baseCandidate = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".env");
+                var baseCandidate = Path.Combine(baseDir, ".env");
+                var baseTxtCandidate = Path.Combine(baseDir, ".env.txt");
                 if (File.Exists(baseCandidate))
                 {
                     envFilePath = baseCandidate;
+                }
+                else if (File.Exists(baseTxtCandidate))
+                {
+                    envFilePath = baseTxtCandidate;
+                }
+            }
+
+            // 2. Second priority: Walk upwards from current working directory
+            if (envFilePath == null)
+            {
+                searchDirectory ??= Directory.GetCurrentDirectory();
+                var dir = new DirectoryInfo(searchDirectory);
+
+                while (dir != null)
+                {
+                    var candidate = Path.Combine(dir.FullName, ".env");
+                    var candidateTxt = Path.Combine(dir.FullName, ".env.txt");
+                    if (File.Exists(candidate))
+                    {
+                        envFilePath = candidate;
+                        break;
+                    }
+                    if (File.Exists(candidateTxt))
+                    {
+                        envFilePath = candidateTxt;
+                        break;
+                    }
+                    dir = dir.Parent;
                 }
             }
 
             if (envFilePath == null || !File.Exists(envFilePath))
             {
+                Console.WriteLine("[EnvLoader] Notice: No .env file found; falling back to appsettings.json and system environment variables.");
                 return;
             }
 
+            Console.WriteLine($"[EnvLoader] Loaded environment from: {envFilePath}");
             var lines = File.ReadAllLines(envFilePath);
             foreach (var rawLine in lines)
             {

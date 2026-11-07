@@ -15,6 +15,7 @@ public class SftpAttendanceService : ISftpAttendanceService
     private readonly IConfiguration _configuration;
     private readonly IAuditService _auditService;
     private readonly ILogger<SftpAttendanceService> _logger;
+    private static string? _configuredScheduleTime;
 
     public SftpAttendanceService(
         AppDbContext context,
@@ -87,6 +88,79 @@ public class SftpAttendanceService : ISftpAttendanceService
         }
     }
 
+    public string GetDailyScheduleTime()
+    {
+        return _configuredScheduleTime
+               ?? Environment.GetEnvironmentVariable("SFTP_SCHEDULE_TIME")
+               ?? _configuration["SftpServer:DailyScheduledTime"]
+               ?? "23:45";
+    }
+
+    public async Task<(bool Success, string Message)> SetDailyScheduleTimeAsync(
+        string newScheduleTime,
+        int? userId = null,
+        string username = "System",
+        string officerName = "System Worker",
+        string role = "System")
+    {
+        if (string.IsNullOrWhiteSpace(newScheduleTime))
+        {
+            return (false, "Schedule time cannot be blank.");
+        }
+
+        if (!TimeSpan.TryParse(newScheduleTime.Trim(), out var parsedTime) || parsedTime.TotalHours < 0 || parsedTime.TotalHours >= 24)
+        {
+            return (false, "Invalid time format. Please provide time in HH:mm format (e.g. 23:45).");
+        }
+
+        string formattedTime = new DateTime(2000, 1, 1, parsedTime.Hours, parsedTime.Minutes, 0).ToString("HH:mm");
+        string previousTime = GetDailyScheduleTime();
+
+        _configuredScheduleTime = formattedTime;
+        Environment.SetEnvironmentVariable("SFTP_SCHEDULE_TIME", formattedTime);
+
+        // Also update .env file if available for permanence
+        try
+        {
+            string envPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".env");
+            if (!File.Exists(envPath))
+            {
+                envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+            }
+
+            if (File.Exists(envPath))
+            {
+                var lines = (await File.ReadAllLinesAsync(envPath)).ToList();
+                int idx = lines.FindIndex(l => l.TrimStart().StartsWith("SFTP_SCHEDULE_TIME="));
+                if (idx >= 0)
+                {
+                    lines[idx] = $"SFTP_SCHEDULE_TIME={formattedTime}";
+                }
+                else
+                {
+                    lines.Add($"SFTP_SCHEDULE_TIME={formattedTime}");
+                }
+                await File.WriteAllLinesAsync(envPath, lines);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not persist SFTP_SCHEDULE_TIME to .env file: {Message}", ex.Message);
+        }
+
+        await _auditService.LogSecurityActionAsync(
+            "SFTP_SCHEDULE_TIME_UPDATED",
+            "SFTP_SCHEDULE",
+            $"Automated daily SFTP attendance sync time changed from {previousTime} to {formattedTime} by {username}.",
+            userId,
+            username,
+            officerName,
+            role);
+
+        _logger.LogInformation("SFTP Daily Scheduled Time updated to {Time} by {User}", formattedTime, username);
+        return (true, $"Automated SFTP schedule timing successfully updated to {formattedTime}.");
+    }
+
     public async Task<string> GenerateAttendanceCsvAsync(DateTime attendanceDate, int? areaId = null, int? subAreaId = null)
     {
         DateTime targetDate = DateTime.SpecifyKind(attendanceDate.Date, DateTimeKind.Utc);
@@ -124,7 +198,8 @@ public class SftpAttendanceService : ISftpAttendanceService
             string outDate = s.LastOutTime.HasValue ? s.LastOutTime.Value.ToString("dd.MM.yyyy") : "";
             string outTime = s.LastOutTime.HasValue ? s.LastOutTime.Value.ToString("H:mm:ss") : "";
 
-            string rficCard = EscapeCsv(s.Employee?.Id.ToString() ?? s.EmpCode);
+            // Requirement 1: RFIC in SFTP report marked as blank/empty because raw logs do not supply RFID/RFIC yet
+            string rficCard = "";
 
             string machineId = !string.IsNullOrWhiteSpace(s.InSerialNumber) && s.InSerialNumber != "MANUAL"
                 ? s.InSerialNumber

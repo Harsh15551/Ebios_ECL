@@ -19,6 +19,30 @@
     <Routes @rendermode="InteractiveServer" />
     <ReconnectModal />
     <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script>
+        // Automatic 15-minute idle session logout
+        (function () {
+            const IDLE_LIMIT_MS = 15 * 60 * 1000; // 15 minutes
+            let lastInteraction = Date.now();
+
+            function refreshTimer() {
+                lastInteraction = Date.now();
+            }
+
+            ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'].forEach(function (eventName) {
+                window.addEventListener(eventName, refreshTimer, { passive: true });
+            });
+
+            setInterval(function () {
+                const currentPath = window.location.pathname.toLowerCase();
+                if (!currentPath.includes('/login')) {
+                    if (Date.now() - lastInteraction >= IDLE_LIMIT_MS) {
+                        window.location.href = '/login';
+                    }
+                }
+            }, 10000); // Check every 10 seconds
+        })();
+    </script>
 </body>
 
 </html>

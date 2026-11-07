@@ -7,9 +7,41 @@ public class UserSessionService
 {
     private static UserDto? _persistedUser;
     private UserDto? _currentUser = _persistedUser;
+    private static DateTime _lastActivityUtc = DateTime.UtcNow;
+    public static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(15);
 
-    public UserDto? CurrentUser => _currentUser ?? _persistedUser;
-    public bool IsAuthenticated => (_currentUser ?? _persistedUser) != null;
+    public void RecordActivity()
+    {
+        _lastActivityUtc = DateTime.UtcNow;
+    }
+
+    public bool IsSessionExpired => (_currentUser ?? _persistedUser) != null && (DateTime.UtcNow - _lastActivityUtc > IdleTimeout);
+
+    public UserDto? CurrentUser
+    {
+        get
+        {
+            if (IsSessionExpired)
+            {
+                Logout();
+                return null;
+            }
+            return _currentUser ?? _persistedUser;
+        }
+    }
+
+    public bool IsAuthenticated
+    {
+        get
+        {
+            if (IsSessionExpired)
+            {
+                Logout();
+                return false;
+            }
+            return (_currentUser ?? _persistedUser) != null;
+        }
+    }
 
     public bool IsSuperAdmin => CurrentUser?.Role == UserRole.SuperAdmin;
     public bool IsAreaAdmin => CurrentUser?.Role == UserRole.AreaPersonnelManager;
@@ -61,6 +93,7 @@ public class UserSessionService
     {
         _currentUser = user;
         _persistedUser = user;
+        _lastActivityUtc = DateTime.UtcNow;
         NotifyStateChanged();
     }
 

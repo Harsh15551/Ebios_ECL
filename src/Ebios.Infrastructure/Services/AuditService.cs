@@ -274,7 +274,22 @@ public class AuditService : IAuditService
 
         if (!string.IsNullOrWhiteSpace(filter.Category) && filter.Category != "ALL")
         {
-            query = query.Where(a => a.Category == filter.Category);
+            if (filter.Category == "Onboarding")
+            {
+                query = query.Where(a => a.Action == "WORKER_CREATED" || a.Action == "BULK_WORKERS_IMPORTED");
+            }
+            else if (filter.Category == "Transfer")
+            {
+                query = query.Where(a => a.Action == "WORKER_TRANSFER");
+            }
+            else if (filter.Category == "Security")
+            {
+                query = query.Where(a => a.Category == "Security" && a.Action != "WORKER_CREATED" && a.Action != "BULK_WORKERS_IMPORTED" && a.Action != "WORKER_TRANSFER");
+            }
+            else
+            {
+                query = query.Where(a => a.Category == filter.Category);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(filter.Status) && filter.Status != "ALL")

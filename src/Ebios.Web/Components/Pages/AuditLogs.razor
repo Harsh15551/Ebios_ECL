@@ -45,6 +45,8 @@
                 <label class="form-label small fw-semibold text-muted mb-1">Category</label>
                 <select class="form-select form-select-sm" @bind="selectedCategory" @bind:after="ApplyFilterAsync">
                     <option value="ALL">All Categories</option>
+                    <option value="Onboarding">Employee Onboarding</option>
+                    <option value="Transfer">Employee Transfers</option>
                     <option value="Regularization">Attendance Regularization</option>
                     <option value="SftpDispatch">SFTP Report Dispatch</option>
                     <option value="Security">Security &amp; 2FA</option>
@@ -127,22 +129,58 @@
                                 @log.Timestamp.ToLocalTime().ToString("dd-MM-yyyy HH:mm:ss")
                             </td>
                             <td>
-                                @if (log.Category == "Regularization")
+                                @if (log.Action == "WORKER_CREATED" || log.Action == "BULK_WORKERS_IMPORTED")
+                                {
+                                    <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                        <i class="bi bi-person-plus-fill me-1"></i> Onboarding
+                                    </span>
+                                }
+                                else if (log.Action == "WORKER_TRANSFER")
+                                {
+                                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle">
+                                        <i class="bi bi-arrow-left-right me-1"></i> Unit Transfer
+                                    </span>
+                                }
+                                else if (log.Action == "EMPLOYEE_CATEGORY_CHANGED")
+                                {
+                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
+                                        <i class="bi bi-person-badge me-1"></i> Executive
+                                    </span>
+                                }
+                                else if (log.Category == "Regularization")
                                 {
                                     <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
                                         <i class="bi bi-pencil-square me-1"></i> Regularization
                                     </span>
                                 }
-                                else if (log.Category == "SftpDispatch")
+                                else if (log.Category == "SftpDispatch" || log.Action == "SFTP_SCHEDULE_TIME_UPDATED")
                                 {
                                     <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">
                                         <i class="bi bi-cloud-arrow-up me-1"></i> SFTP Sync
                                     </span>
                                 }
+                                else if (log.Action.StartsWith("DEVICE_"))
+                                {
+                                    <span class="badge bg-secondary-subtle text-dark border border-secondary-subtle">
+                                        <i class="bi bi-hdd-network me-1"></i> Turnstile Device
+                                    </span>
+                                }
+                                else if (log.Action.StartsWith("SHIFT_") || log.Action.StartsWith("ROSTER_"))
+                                {
+                                    <span class="badge bg-dark-subtle text-dark border border-dark-subtle">
+                                        <i class="bi bi-calendar3 me-1"></i> Shift &amp; Roster
+                                    </span>
+                                }
+                                else if (log.Action.StartsWith("BIOMETRIC_"))
+                                {
+                                    <span class="badge" style="background-color: #f3e8ff; color: #7e22ce; border: 1px solid #d8b4fe;">
+                                        <i class="bi bi-fingerprint me-1"></i> Biometric Form
+                                    </span>
+                                }
                                 else if (log.Category == "Security")
                                 {
                                     <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
-                                        <i class="bi bi-shield-lock me-1"></i> Security
+                                        <i class="bi bi-shield-lock me-1"></i> Security &amp; Access
                                     </span>
                                 }
                                 else
@@ -151,7 +189,13 @@
                                 }
                             </td>
                             <td>
-                                <strong class="small font-monospace">@FormatAction(log.Action)</strong>
+                                @{
+                                    var (actionTitle, actionSubtitle) = GetActionDisplay(log.Action);
+                                }
+                                <div>
+                                    <strong class="small font-monospace text-dark">@actionTitle</strong>
+                                    <div class="text-muted" style="font-size: 0.72rem; line-height: 1.2;">@actionSubtitle</div>
+                                </div>
                             </td>
                             <td>
                                 <span class="badge bg-light text-dark border font-monospace text-truncate d-inline-block" style="max-width: 210px;" title="@log.EntityReference">
@@ -433,6 +477,51 @@
     {
         isDiffModalOpen = false;
         selectedDiffLog = null;
+    }
+
+    private static (string Title, string Subtitle) GetActionDisplay(string action)
+    {
+        return action switch
+        {
+            "WORKER_CREATED" => ("👤 Worker Onboarded", "Personnel Directory & Biometric Registration"),
+            "BULK_WORKERS_IMPORTED" => ("👥 Bulk Workers Imported", "Batch Personnel Directory Onboarding"),
+            "WORKER_TRANSFER" => ("🏢 Worker Unit Transfer", "Colliery / Mine Relocation"),
+            "EMPLOYEE_CATEGORY_CHANGED" => ("👔 Executive Category Changed", "Punch Regularity & Single-Punch Privilege"),
+            "REGULARIZATION_OVERWRITTEN" => ("⚠️ Overwrite Regularization", "Existing Regularized Punch Modified"),
+            "REGULARIZATION_APPLIED" => ("✏️ Apply Regularization", "Manual Punch Timing Regularization"),
+            "REGULARIZATION_REVERTED_TO_PUNCHES" => ("🔄 Revert to Machine Punches", "Restored Raw Biometric Log Values"),
+            "SFTP_DELIVERED_VERIFIED" => ("✅ SFTP Delivered & Verified", "Nightly SAP Attendance CSV Dispatched"),
+            "SFTP_TRANSMISSION_FAILED" => ("❌ SFTP Transmission Failed", "Remote SAP Server Connection Error"),
+            "SFTP_SCHEDULE_TIME_UPDATED" => ("⏰ SFTP Schedule Changed", "Automated Daily Transmission Timing"),
+            "2FA_ADMIN_RESET" => ("🛡️ 2FA Admin Reset", "MFA Security Token Re-initialized"),
+            "SUPERADMIN_EMERGENCY_LOGIN" => ("🚨 Admin Emergency Login", "Elevated Break-Glass Authorization"),
+            "USER_CREATED" => ("👤 User Account Created", "System Officer User Provisioned"),
+            "USER_ACTIVATED" => ("🟢 User Activated", "Account Access Enabled"),
+            "USER_DEACTIVATED" => ("🔴 User Deactivated", "Account Access Revoked"),
+            "USER_PERMISSIONS_CHANGED" => ("🔑 User Permissions Changed", "Granular RBAC Privileges Updated"),
+            "WORKER_ACCESS_BLOCKED" => ("⛔ Worker Blocked", "System-wide Biometric Suspension"),
+            "WORKER_ACCESS_UNBLOCKED" => ("✅ Worker Unblocked", "System-wide Biometric Reactivation"),
+            "WORKER_DEVICE_BLOCKED" => ("🚫 Turnstile Access Blocked", "Device Turnstile Entry Denied"),
+            "WORKER_DEVICE_UNBLOCKED" => ("🟢 Turnstile Access Allowed", "Device Turnstile Entry Restored"),
+            "DEVICE_REGISTERED" => ("📟 Device Registered", "eBios Hardware Gateway Attached"),
+            "DEVICE_UPDATED" => ("✏️ Device Updated", "IP Endpoint & Location Configured"),
+            "DEVICE_ACTIVATED" => ("🟢 Device Activated", "Online Polling & Stream Enabled"),
+            "DEVICE_STATUS_CHANGED" => ("⚙️ Device Status Changed", "Hardware Operational State Toggle"),
+            "SHIFT_CREATED" => ("🕒 Shift Created", "Roster Timing Definition Added"),
+            "SHIFT_UPDATED" => ("✏️ Shift Updated", "Start/End/Grace Timing Adjusted"),
+            "SHIFT_DELETED" => ("🗑️ Shift Deleted", "Shift Definition Retired"),
+            "ROSTER_ASSIGNED" => ("📅 Shift Roster Assigned", "Individual Employee Shift Calendar"),
+            "BULK_ROSTER_IMPORTED" => ("📋 Bulk Roster Imported", "Batch Shift Schedule Applied"),
+            "BIOMETRIC_FORM_SAVED" => ("📝 Biometric Form Saved", "KYC Physical Enrollment Form"),
+            "BIOMETRIC_PHOTO_UPLOADED" => ("📷 Photo Uploaded", "Employee Biometric ID Portrait"),
+            "SIGNED_FORM_UPLOADED" => ("📄 Signed Document Uploaded", "Scanned Physical Application Form"),
+            "BULK_BIOMETRIC_IMPORTED" => ("📦 Bulk Forms Imported", "Batch Biometric Forms Uploaded"),
+            "COLLIERY_UNIT_CREATED" => ("🏢 Colliery Unit Created", "New Sub-Area / Colliery Pit"),
+            "COLLIERY_UNIT_UPDATED" => ("✏️ Colliery Unit Updated", "Sub-Area Configuration Modified"),
+            "MINING_AREA_CREATED" => ("⛏️ Mining Area Created", "Administrative Area Added"),
+            "MINING_AREA_UPDATED" => ("✏️ Mining Area Updated", "Administrative Area Updated"),
+            _ => (action.Replace("_", " "), "System Activity Event")
+        };
     }
 
     private static string FormatAction(string action)

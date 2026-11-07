@@ -335,15 +335,27 @@ public static class DbInitializer
                 logger.LogInformation("Seeded {Count} ECL Master Shifts successfully.", shifts.Count);
             }
 
-            // Synchronize and align Shift reporting windows to standard rule: [StartTime - 30m, StartTime + 90m]
+            // Synchronize and align Shift reporting windows to standard rule:
+            // Night shifts: [StartTime - 90m, StartTime + 120m]
+            // Day shifts:   [StartTime - 60m, StartTime + 90m]
             var existingShifts = await context.ShiftMasters.ToListAsync();
             bool shiftsModified = false;
             foreach (var s in existingShifts)
             {
-                var expectedInStart = s.StartTime - TimeSpan.FromMinutes(30);
+                bool isNight = s.IsNightShift || s.EndTime < s.StartTime;
+                if (!s.IsNightShift && s.EndTime < s.StartTime)
+                {
+                    s.IsNightShift = true;
+                    shiftsModified = true;
+                }
+
+                int leadMinutes = isNight ? 90 : 60;
+                int trailMinutes = isNight ? 120 : 90;
+
+                var expectedInStart = s.StartTime - TimeSpan.FromMinutes(leadMinutes);
                 if (expectedInStart < TimeSpan.Zero) expectedInStart += TimeSpan.FromHours(24);
 
-                var expectedInEnd = s.StartTime + TimeSpan.FromMinutes(90);
+                var expectedInEnd = s.StartTime + TimeSpan.FromMinutes(trailMinutes);
                 if (expectedInEnd >= TimeSpan.FromHours(24)) expectedInEnd -= TimeSpan.FromHours(24);
 
                 if (s.InWindowStart != expectedInStart || s.InWindowEnd != expectedInEnd)
@@ -356,7 +368,19 @@ public static class DbInitializer
             if (shiftsModified)
             {
                 await context.SaveChangesAsync();
-                logger.LogInformation("Updated Shift InWindow to standard [StartTime - 30m, StartTime + 90m] across all shifts.");
+                logger.LogInformation("Updated Shift InWindow and IsNightShift flags across all shifts.");
+            }
+
+            // Synchronize Area Headquarters from "ECL HQ Sanctoria" to "ECL MAIN HQ"
+            var areasToUpdate = await context.Areas.Where(a => a.Headquarters.Contains("Sanctoria")).ToListAsync();
+            if (areasToUpdate.Any())
+            {
+                foreach (var a in areasToUpdate)
+                {
+                    a.Headquarters = "ECL MAIN HQ";
+                }
+                await context.SaveChangesAsync();
+                logger.LogInformation("Updated Headquarters to 'ECL MAIN HQ' for {Count} existing Areas.", areasToUpdate.Count);
             }
 
             // Seed initial data if empty
@@ -382,7 +406,7 @@ public static class DbInitializer
                 {
                     AreaCode = "SLP",
                     AreaName = "Salanpur Mining Area",
-                    Headquarters = "ECL HQ Sanctoria",
+                    Headquarters = "ECL MAIN HQ",
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 };
@@ -391,7 +415,7 @@ public static class DbInitializer
                 {
                     AreaCode = "SRI",
                     AreaName = "Sripur Mining Area",
-                    Headquarters = "ECL HQ Sanctoria",
+                    Headquarters = "ECL MAIN HQ",
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 };
@@ -400,7 +424,7 @@ public static class DbInitializer
                 {
                     AreaCode = "MUG",
                     AreaName = "Mugma Mining Area",
-                    Headquarters = "ECL HQ Sanctoria",
+                    Headquarters = "ECL MAIN HQ",
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 };
