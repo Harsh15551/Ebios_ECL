@@ -61,6 +61,10 @@
                 <i class="bi bi-cloud-arrow-up me-1"></i>
                 <span>Push to SFTP</span>
             </button>
+            <button class="btn btn-outline-dark btn-sm fw-semibold" @onclick="OpenBasicReportModal" title="Generate Daily Attendance Report (Basic Report)">
+                <i class="bi bi-file-earmark-pdf me-1 text-danger"></i>
+                <span>Basic Report</span>
+            </button>
             <button class="btn btn-outline-primary btn-sm" @onclick="RecalculateMusterRollAsync" disabled="@isRecalculating">
                 @if (isRecalculating)
                 {
@@ -1383,6 +1387,189 @@ else
     </div>
 }
 
+<!-- eSSL Daily Attendance Basic Report Modal -->
+@if (isBasicReportModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.65); z-index: 1070;">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width: 1100px;">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white py-2 d-flex justify-content-between align-items-center no-print">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-file-earmark-pdf-fill text-warning fs-5"></i>
+                        <h6 class="modal-title fw-bold mb-0">Daily Attendance Report (Basic Report) &bull; Print Preview</h6>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="d-flex align-items-center gap-1 me-3">
+                            <span class="small text-white-50">Group By:</span>
+                            <select class="form-select form-select-sm py-0" style="width: auto;" @bind="basicReportGroupBy">
+                                <option value="SubArea">Colliery / Department</option>
+                                <option value="Designation">Designation / Role</option>
+                            </select>
+                        </div>
+                        <button type="button" class="btn btn-warning btn-sm fw-bold px-3 shadow-sm" onclick="window.print()">
+                            <i class="bi bi-printer me-1"></i> Print / Save as PDF
+                        </button>
+                        <button type="button" class="btn-close btn-close-white ms-2" @onclick="CloseBasicReportModal"></button>
+                    </div>
+                </div>
+                <div class="modal-body p-4 bg-secondary bg-opacity-10" style="overflow-y: auto; max-height: calc(100vh - 120px);">
+                    <div id="essl-basic-report-container" class="bg-white shadow p-4 mx-auto" style="max-width: 960px; font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 11px;">
+                        
+                        <!-- Report Header (Clean, without company branding / header) -->
+                        <div class="d-flex justify-content-between align-items-end mb-2">
+                            <div>
+                                <h5 class="fw-bold mb-1" style="font-size: 17px; color: #000;">Daily Attendance Report (Basic Report)</h5>
+                                <div style="font-size: 12px; color: #333;">@musterFromDate.ToString("MMM dd yyyy") To @musterToDate.ToString("MMM dd yyyy")</div>
+                            </div>
+                            <div class="text-end">
+                                <div style="font-size: 11px; color: #333;">Printed On : @DateTime.Now.ToString("MMM dd yyyy HH:mm")</div>
+                            </div>
+                        </div>
+
+                        <hr style="border: 0; border-top: 1.5px solid #000; margin: 6px 0 14px 0; opacity: 1;" />
+
+                        @{
+                            var dateGroups = FilteredMusterRoll
+                                .GroupBy(m => m.AttendanceDate.Date)
+                                .OrderBy(g => g.Key);
+                        }
+
+                        @if (!dateGroups.Any())
+                        {
+                            <div class="text-center py-5 text-muted">
+                                <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                                No attendance records found for the selected period (@musterFromDate.ToString("dd-MMM-yyyy") to @musterToDate.ToString("dd-MMM-yyyy")).
+                            </div>
+                        }
+                        else
+                        {
+                            int pageCounter = 1;
+                            @foreach (var dateGroup in dateGroups)
+                            {
+                                <div class="mb-3" style="font-size: 12px;">
+                                    <strong>Attendance Date</strong> <span class="ms-3">@dateGroup.Key.ToString("dd-MMM-yyyy")</span>
+                                </div>
+
+                                var deptGroups = dateGroup
+                                    .GroupBy(m => basicReportGroupBy == "Designation" 
+                                        ? (!string.IsNullOrWhiteSpace(m.Designation) ? m.Designation : "General") 
+                                        : (!string.IsNullOrWhiteSpace(m.SubAreaName) ? m.SubAreaName : "Central Accounts"))
+                                    .OrderBy(g => g.Key);
+
+                                @foreach (var dept in deptGroups)
+                                {
+                                    <div class="mt-3 mb-1 fw-bold" style="font-size: 11.5px;">
+                                        <span style="display: inline-block; width: 100px;">Department</span>
+                                        <span>@dept.Key</span>
+                                    </div>
+
+                                    <table class="w-100 mb-3" style="border-collapse: collapse; font-size: 10.5px;">
+                                        <thead>
+                                            <tr style="background-color: #fafafa;">
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: center; width: 32px;">SNo</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: left; width: 68px;">E. Code</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: left; width: 160px;">Name</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: left; width: 65px;">Shift</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: center; width: 68px;">InTime</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: center; width: 68px;">OutTime</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: center; width: 65px;">Work Dur.</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: center; width: 48px;">OT</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: center; width: 65px;">Tot. Dur.</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: left; width: 140px;">Status</th>
+                                                <th style="border: 1px solid #333; padding: 4px 6px; text-align: left;">Remarks</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @{ int sno = 1; }
+                                            @foreach (var row in dept)
+                                            {
+                                                string inTimeStr = row.FirstInTime.HasValue ? row.FirstInTime.Value.ToString("HH:mm:ss") : "";
+                                                string outTimeStr = row.LastOutTime.HasValue ? row.LastOutTime.Value.ToString("HH:mm:ss") : "";
+                                                string workDur = FormatDuration(row.TotalWorkMinutes);
+                                                string otDur = FormatDuration(row.OvertimeMinutes);
+                                                string totDur = FormatDuration(row.TotalWorkMinutes + row.OvertimeMinutes);
+                                                string statusStr = FormatBasicReportStatus(row);
+                                                string remarksStr = !string.IsNullOrWhiteSpace(row.CorrectionReason) 
+                                                    ? row.CorrectionReason 
+                                                    : (!string.IsNullOrWhiteSpace(row.Remarks) ? row.Remarks : "");
+
+                                                <tr>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px; text-align: center;">@sno</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px;">@row.EmpCode</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px;">@(row.EmployeeName ?? "—")</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px;">@row.ShiftCode</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px; text-align: center;">@inTimeStr</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px; text-align: center;">@outTimeStr</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px; text-align: center;">@workDur</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px; text-align: center;">@otDur</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px; text-align: center;">@totDur</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px;">@statusStr</td>
+                                                    <td style="border: 1px solid #555; padding: 4px 6px;">@remarksStr</td>
+                                                </tr>
+                                                sno++;
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+
+                                <hr style="border: 0; border-top: 1px solid #777; margin: 18px 0 6px 0; opacity: 0.8;" />
+                                <div class="d-flex justify-content-between" style="font-size: 11px; font-weight: bold; color: #222;">
+                                    <div>Generated By:essl</div>
+                                    <div>Page No. @(pageCounter++)</div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer bg-light py-2 no-print">
+                    <button type="button" class="btn btn-secondary btn-sm" @onclick="CloseBasicReportModal">Close</button>
+                    <button type="button" class="btn btn-warning btn-sm fw-bold px-3" onclick="window.print()">
+                        <i class="bi bi-printer me-1"></i> Print / Save as PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    @@media print {
+        body * {
+            visibility: hidden !important;
+        }
+        #essl-basic-report-container, #essl-basic-report-container * {
+            visibility: visible !important;
+        }
+        #essl-basic-report-container {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+        }
+        .modal, .modal-dialog, .modal-content, .modal-body {
+            position: static !important;
+            display: block !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            background: white !important;
+            box-shadow: none !important;
+            border: none !important;
+        }
+        .no-print {
+            display: none !important;
+        }
+        @@page {
+            size: A4 portrait;
+            margin: 10mm 12mm 12mm 12mm;
+        }
+    }
+</style>
+
 @code {
     private string activeMainTab = "muster";
 
@@ -1411,6 +1598,41 @@ else
     private string musterSearchTerm = string.Empty;
     private bool isMusterLoading = false;
     private bool isRecalculating = false;
+
+    // eSSL Basic Report Modal State
+    private bool isBasicReportModalOpen = false;
+    private string basicReportGroupBy = "SubArea";
+
+    private void OpenBasicReportModal() => isBasicReportModalOpen = true;
+    private void CloseBasicReportModal() => isBasicReportModalOpen = false;
+
+    private static string FormatDuration(int minutes)
+    {
+        if (minutes <= 0) return "00:00";
+        int h = minutes / 60;
+        int m = minutes % 60;
+        return $"{h}:{m:D2}";
+    }
+
+    private static string FormatBasicReportStatus(DailyMusterRollDto row)
+    {
+        bool hasIn = row.FirstInTime.HasValue;
+        bool hasOut = row.LastOutTime.HasValue;
+
+        if (!hasIn && !hasOut) return "Absent";
+
+        if (hasIn && !hasOut)
+        {
+            if (row.TotalWorkMinutes < 300)
+                return "½Present (No OutPunch)";
+            return "Present (No OutPunch)";
+        }
+
+        if (row.TotalWorkMinutes <= 0) return "Absent";
+        if (row.TotalWorkMinutes < 300 || row.Status == "Half Day") return "½Present";
+        if (row.Status == "Double Shift") return "Double Shift";
+        return "Present";
+    }
 
     // Metadata
     private List<SubAreaDto> permittedSubAreas = new();
