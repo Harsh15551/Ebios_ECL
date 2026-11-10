@@ -15,6 +15,7 @@ public class BiometricFormService : IBiometricFormService
     private readonly AppDbContext _context;
     private readonly IEbiosSoapService _ebiosSoapService;
     private readonly IAuditService _auditService;
+    private readonly IBiometricCryptoService _cryptoService;
     private readonly ILogger<BiometricFormService> _logger;
     private readonly string _storageBasePath;
 
@@ -22,11 +23,13 @@ public class BiometricFormService : IBiometricFormService
         AppDbContext context,
         IEbiosSoapService ebiosSoapService,
         IAuditService auditService,
+        IBiometricCryptoService cryptoService,
         ILogger<BiometricFormService> logger)
     {
         _context = context;
         _ebiosSoapService = ebiosSoapService;
         _auditService = auditService;
+        _cryptoService = cryptoService;
         _logger = logger;
 
         // Base directory: storage/biometric_forms under application root (handles running from root or web project)
@@ -274,7 +277,12 @@ public class BiometricFormService : IBiometricFormService
 
         // Update Section 1
         entity.EmployeeName = dto.EmployeeName?.Trim() ?? string.Empty;
-        entity.AadhaarNumber = dto.AadhaarNumber?.Trim() ?? string.Empty;
+        entity.AadhaarNumber = MaskAadhaar(dto.AadhaarNumber);
+        entity.HasAadhaarConsent = dto.HasAadhaarConsent;
+        if (dto.HasAadhaarConsent && !entity.ConsentTimestamp.HasValue)
+        {
+            entity.ConsentTimestamp = DateTime.UtcNow;
+        }
         entity.Category = string.IsNullOrWhiteSpace(dto.Category) ? "Non-Executive" : dto.Category.Trim();
         entity.PositionDesignation = dto.PositionDesignation?.Trim() ?? string.Empty;
         entity.DepartmentUnit = dto.DepartmentUnit?.Trim() ?? string.Empty;
@@ -362,13 +370,23 @@ public class BiometricFormService : IBiometricFormService
         }
 
         var empDir = GetPhysicalStoragePath(safeEmpCode);
-        var targetFileName = $"{safeEmpCode}_{normalizedBox}.jpg";
+        var targetFileName = $"{safeEmpCode}_{normalizedBox}.enc";
         var fullPath = Path.Combine(empDir, targetFileName);
 
-        // Save stream directly to disk as JPG
-        using (var output = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        // Encrypt photo stream using AES-256-GCM before saving to disk
+        using (var ms = new MemoryStream())
         {
-            await fileStream.CopyToAsync(output);
+            await fileStream.CopyToAsync(ms);
+            var plainBytes = ms.ToArray();
+            var encryptedBytes = _cryptoService.Encrypt(plainBytes);
+            await File.WriteAllBytesAsync(fullPath, encryptedBytes);
+        }
+
+        // Clean up legacy unencrypted file if present
+        var legacyJpg = Path.Combine(empDir, $"{safeEmpCode}_{normalizedBox}.jpg");
+        if (File.Exists(legacyJpg))
+        {
+            try { File.Delete(legacyJpg); } catch { /* ignore */ }
         }
 
         // Relative path stored in database
@@ -453,12 +471,23 @@ public class BiometricFormService : IBiometricFormService
         }
 
         var empDir = GetPhysicalStoragePath(safeEmpCode);
-        var targetFileName = $"{safeEmpCode}_signed_form{ext}";
+        var targetFileName = $"{safeEmpCode}_signed_form{ext}.enc";
         var fullPath = Path.Combine(empDir, targetFileName);
 
-        using (var output = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        // Encrypt signed form stream using AES-256-GCM before saving to disk
+        using (var ms = new MemoryStream())
         {
-            await fileStream.CopyToAsync(output);
+            await fileStream.CopyToAsync(ms);
+            var plainBytes = ms.ToArray();
+            var encryptedBytes = _cryptoService.Encrypt(plainBytes);
+            await File.WriteAllBytesAsync(fullPath, encryptedBytes);
+        }
+
+        // Clean up legacy unencrypted file if present
+        var legacyPlain = Path.Combine(empDir, $"{safeEmpCode}_signed_form{ext}");
+        if (File.Exists(legacyPlain))
+        {
+            try { File.Delete(legacyPlain); } catch { /* ignore */ }
         }
 
         var relativePath = $"storage/biometric_forms/{safeEmpCode}/{targetFileName}";
@@ -573,6 +602,22 @@ public class BiometricFormService : IBiometricFormService
                 var empCode = cols[idxEmpCode].Trim();
                 if (string.IsNullOrWhiteSpace(empCode)) continue;
 
+                // Location validation against ECL SubAreas (case-insensitive) - Validate FIRST before touching DB tracker
+                string locCandidate = "";
+                if (idxUnit >= 0 && idxUnit < cols.Count && !string.IsNullOrWhiteSpace(cols[idxUnit]))
+                    locCandidate = cols[idxUnit].Trim();
+                else if (idxPosting >= 0 && idxPosting < cols.Count && !string.IsNullOrWhiteSpace(cols[idxPosting]))
+                    locCandidate = cols[idxPosting].Trim();
+
+                SubArea? matchedSubArea = MatchSubAreaCaseInsensitive(locCandidate, allSubAreas, allAreas);
+                if (matchedSubArea == null)
+                {
+                    result.FailureCount++;
+                    string locDesc = string.IsNullOrWhiteSpace(locCandidate) ? "MISSING" : locCandidate;
+                    result.Errors.Add($"Line {lineNum} ({empCode}): Location '{locDesc}' is missing or does not match any ECL Colliery Unit (case-insensitive check). Row rejected — worker NOT saved or onboarded.");
+                    continue;
+                }
+
                 var form = await _context.EmployeeBiometricForms.FirstOrDefaultAsync(f => f.EmpCode.ToLower() == empCode.ToLower());
                 if (form == null)
                 {
@@ -585,7 +630,12 @@ public class BiometricFormService : IBiometricFormService
                 }
 
                 if (idxName >= 0 && idxName < cols.Count && !string.IsNullOrWhiteSpace(cols[idxName])) form.EmployeeName = cols[idxName].Trim();
-                if (idxAadhaar >= 0 && idxAadhaar < cols.Count && !string.IsNullOrWhiteSpace(cols[idxAadhaar])) form.AadhaarNumber = cols[idxAadhaar].Trim();
+                if (idxAadhaar >= 0 && idxAadhaar < cols.Count && !string.IsNullOrWhiteSpace(cols[idxAadhaar]))
+                {
+                    form.AadhaarNumber = MaskAadhaar(cols[idxAadhaar]);
+                    form.HasAadhaarConsent = true;
+                    form.ConsentTimestamp = DateTime.UtcNow;
+                }
                 if (idxCategory >= 0 && idxCategory < cols.Count && !string.IsNullOrWhiteSpace(cols[idxCategory])) form.Category = cols[idxCategory].Trim();
                 if (idxDesignation >= 0 && idxDesignation < cols.Count && !string.IsNullOrWhiteSpace(cols[idxDesignation])) form.PositionDesignation = cols[idxDesignation].Trim();
                 if (idxUnit >= 0 && idxUnit < cols.Count && !string.IsNullOrWhiteSpace(cols[idxUnit])) form.DepartmentUnit = cols[idxUnit].Trim();
@@ -611,20 +661,6 @@ public class BiometricFormService : IBiometricFormService
 
                 form.UpdatedBy = updatedBy;
                 form.UpdatedAt = DateTime.UtcNow;
-
-                // Location validation against ECL SubAreas (case-insensitive)
-                string locCandidate = form.DepartmentUnit?.Trim() ?? "";
-                if (string.IsNullOrWhiteSpace(locCandidate)) locCandidate = form.PlaceOfPosting?.Trim() ?? "";
-
-                SubArea? matchedSubArea = MatchSubAreaCaseInsensitive(locCandidate, allSubAreas, allAreas);
-
-                if (matchedSubArea == null)
-                {
-                    result.FailureCount++;
-                    string locDesc = string.IsNullOrWhiteSpace(locCandidate) ? "MISSING" : locCandidate;
-                    result.Errors.Add($"Line {lineNum} ({empCode}): Location '{locDesc}' is missing or does not match any ECL Colliery Unit (case-insensitive check). Worker NOT onboarded.");
-                    continue;
-                }
 
                 // Check worker existence: update if exists, or auto-onboard if new
                 bool isExecutive = !string.IsNullOrWhiteSpace(form.Category) && 
@@ -947,7 +983,7 @@ public class BiometricFormService : IBiometricFormService
     {
         var sb = new StringBuilder();
         sb.AppendLine("Employee ID,Employee Name,Aadhaar Number,Category of Employee (Executive/Non-Executive),Position/Designation,Department/Unit,Place of Posting,Registration Date & Time (YYYY-MM-DD HH:MM),Location of Registration,Name of Controlling Officer,Designation of Controlling Officer,ECL HR Name,ECL HR Designation,ECL Security Name,ECL Security Designation,WEBEL Name,WEBEL Designation,WEBEL Department,ECL/WEBEL Witness Name,ECL/WEBEL Witness Designation");
-        sb.AppendLine("TSA011,RAMESH KUMAR,123456789012,Non-Executive,Colliery Worker,Pit 1 Colliery Unit,Salanpur Mining Area,2026-11-04 10:30,Pithead Incline Desk,S. K. Verma,Senior Manager (Mining),A. Banerjee,Assistant Manager (HR),R. Singh,Security Inspector,D. Ghosh,Site Engineer,Technical,M. Roy,System Supervisor");
+        sb.AppendLine("TSA011,RAMESH KUMAR,XXXX-XXXX-9012,Non-Executive,Colliery Worker,Pit 1 Colliery Unit,Salanpur Mining Area,2026-11-04 10:30,Pithead Incline Desk,S. K. Verma,Senior Manager (Mining),A. Banerjee,Assistant Manager (HR),R. Singh,Security Inspector,D. Ghosh,Site Engineer,Technical,M. Roy,System Supervisor");
         return Encoding.UTF8.GetBytes(sb.ToString());
     }
 
@@ -1003,7 +1039,9 @@ public class BiometricFormService : IBiometricFormService
             EmployeeId = f.EmployeeId,
             EmpCode = f.EmpCode,
             EmployeeName = f.EmployeeName,
-            AadhaarNumber = f.AadhaarNumber,
+            AadhaarNumber = MaskAadhaar(f.AadhaarNumber),
+            HasAadhaarConsent = f.HasAadhaarConsent,
+            ConsentTimestamp = f.ConsentTimestamp,
             Category = string.IsNullOrWhiteSpace(f.Category) ? "Non-Executive" : f.Category,
             PositionDesignation = f.PositionDesignation,
             DepartmentUnit = f.DepartmentUnit,
@@ -1037,6 +1075,26 @@ public class BiometricFormService : IBiometricFormService
             UpdatedBy = f.UpdatedBy,
             UpdatedAt = f.UpdatedAt
         };
+    }
+
+    public static string MaskAadhaar(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        var digitsOnly = new string(raw.Where(char.IsDigit).ToArray());
+        if (digitsOnly.Length == 12)
+        {
+            return $"XXXX-XXXX-{digitsOnly.Substring(8, 4)}";
+        }
+        if (raw.Contains('X', StringComparison.OrdinalIgnoreCase))
+        {
+            var last4 = digitsOnly.Length >= 4 ? digitsOnly.Substring(digitsOnly.Length - 4) : digitsOnly;
+            return string.IsNullOrEmpty(last4) ? "XXXX-XXXX-XXXX" : $"XXXX-XXXX-{last4}";
+        }
+        if (digitsOnly.Length >= 4)
+        {
+            return $"XXXX-XXXX-{digitsOnly.Substring(digitsOnly.Length - 4)}";
+        }
+        return raw.Trim();
     }
 
     public static SubArea? MatchSubAreaCaseInsensitive(string? locationInput, IEnumerable<SubArea> allSubAreas, IEnumerable<Area> allAreas)
@@ -1152,5 +1210,209 @@ public class BiometricFormService : IBiometricFormService
         }
         result.Add(current.ToString());
         return result;
+    }
+
+    public async Task<(byte[] FileBytes, string ContentType)?> GetPhotoBytesAsync(string empCode, string boxType)
+    {
+        var safeEmpCode = SanitizeEmpCode(empCode);
+        var normalizedBox = NormalizeBoxType(boxType);
+        if (string.IsNullOrEmpty(normalizedBox))
+        {
+            return null;
+        }
+
+        var empDir = GetPhysicalStoragePath(safeEmpCode);
+        if (!Directory.Exists(empDir))
+        {
+            return null;
+        }
+
+        var candidates = new[]
+        {
+            Path.Combine(empDir, $"{safeEmpCode}_{normalizedBox}.enc"),
+            Path.Combine(empDir, $"{safeEmpCode}_{normalizedBox}.jpg.enc"),
+            Path.Combine(empDir, $"{safeEmpCode}_{normalizedBox}.png.enc"),
+            Path.Combine(empDir, $"{safeEmpCode}_{normalizedBox}.jpg"),
+            Path.Combine(empDir, $"{safeEmpCode}_{normalizedBox}.jpeg"),
+            Path.Combine(empDir, $"{safeEmpCode}_{normalizedBox}.png"),
+            Path.Combine(empDir, $"{normalizedBox}.enc"),
+            Path.Combine(empDir, $"{normalizedBox}.jpg"),
+            Path.Combine(empDir, $"{normalizedBox}.png")
+        };
+
+        string? foundPath = candidates.FirstOrDefault(File.Exists);
+        if (foundPath == null)
+        {
+            var form = await _context.EmployeeBiometricForms.AsNoTracking().FirstOrDefaultAsync(f => f.EmpCode.ToLower() == safeEmpCode.ToLower());
+            if (form != null)
+            {
+                string? dbPath = normalizedBox switch
+                {
+                    "aadhaar" => form.AadhaarPhotoPath,
+                    "idcard" => form.IdCardPhotoPath,
+                    "person" => form.PersonPhotoPath,
+                    "template" => form.TemplatePhotoPath,
+                    _ => null
+                };
+                if (!string.IsNullOrEmpty(dbPath))
+                {
+                    var resolved = ResolveFullPath(dbPath);
+                    if (File.Exists(resolved)) foundPath = resolved;
+                }
+            }
+        }
+
+        if (foundPath == null)
+        {
+            return null;
+        }
+
+        var fileBytes = await File.ReadAllBytesAsync(foundPath);
+        var plainBytes = _cryptoService.DecryptIfEncrypted(fileBytes);
+        var contentType = DetectImageContentType(plainBytes, foundPath);
+
+        return (plainBytes, contentType);
+    }
+
+    public async Task<(byte[] FileBytes, string ContentType)?> GetSignedFormBytesAsync(string empCode)
+    {
+        var safeEmpCode = SanitizeEmpCode(empCode);
+        var empDir = GetPhysicalStoragePath(safeEmpCode);
+        if (!Directory.Exists(empDir))
+        {
+            return null;
+        }
+
+        var files = Directory.GetFiles(empDir, $"{safeEmpCode}_signed_form*")
+            .OrderBy(f => f.EndsWith(".enc", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ToArray();
+
+        string? foundPath = files.FirstOrDefault();
+        if (foundPath == null)
+        {
+            var pdfs = Directory.GetFiles(empDir, "*.pdf*");
+            foundPath = pdfs.FirstOrDefault();
+        }
+
+        if (foundPath == null)
+        {
+            var form = await _context.EmployeeBiometricForms.AsNoTracking().FirstOrDefaultAsync(f => f.EmpCode.ToLower() == safeEmpCode.ToLower());
+            if (!string.IsNullOrEmpty(form?.SignedPhysicalFormPath))
+            {
+                var resolved = ResolveFullPath(form.SignedPhysicalFormPath);
+                if (File.Exists(resolved)) foundPath = resolved;
+            }
+        }
+
+        if (foundPath == null)
+        {
+            return null;
+        }
+
+        var fileBytes = await File.ReadAllBytesAsync(foundPath);
+        var plainBytes = _cryptoService.DecryptIfEncrypted(fileBytes);
+        var contentType = DetectDocumentContentType(plainBytes, foundPath);
+
+        return (plainBytes, contentType);
+    }
+
+    public async Task<int> EncryptAllExistingPlainImagesAsync()
+    {
+        int convertedCount = 0;
+        if (!Directory.Exists(_storageBasePath)) return 0;
+
+        var workerDirs = Directory.GetDirectories(_storageBasePath);
+        foreach (var dir in workerDirs)
+        {
+            var empCode = Path.GetFileName(dir);
+            var plainFiles = Directory.GetFiles(dir)
+                .Where(f => !f.EndsWith(".enc", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var plainFile in plainFiles)
+            {
+                try
+                {
+                    var ext = Path.GetExtension(plainFile).ToLowerInvariant();
+                    if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".pdf")
+                        continue;
+
+                    var bytes = await File.ReadAllBytesAsync(plainFile);
+                    if (_cryptoService.IsEncrypted(bytes))
+                    {
+                        var encNewName = plainFile + ".enc";
+                        File.Move(plainFile, encNewName, overwrite: true);
+                        convertedCount++;
+                        continue;
+                    }
+
+                    var encrypted = _cryptoService.Encrypt(bytes);
+                    var encPath = Path.Combine(dir, Path.GetFileNameWithoutExtension(plainFile) + ".enc");
+                    await File.WriteAllBytesAsync(encPath, encrypted);
+
+                    File.Delete(plainFile);
+                    convertedCount++;
+
+                    var fileNameOnly = Path.GetFileName(plainFile).ToLowerInvariant();
+                    var newRelative = $"storage/biometric_forms/{empCode}/{Path.GetFileName(encPath)}";
+
+                    var form = await _context.EmployeeBiometricForms.FirstOrDefaultAsync(f => f.EmpCode.ToLower() == empCode.ToLower());
+                    if (form != null)
+                    {
+                        if (fileNameOnly.Contains("aadhaar") || fileNameOnly.Contains("aadhar")) form.AadhaarPhotoPath = newRelative;
+                        else if (fileNameOnly.Contains("idcard") || fileNameOnly.Contains("id_card")) form.IdCardPhotoPath = newRelative;
+                        else if (fileNameOnly.Contains("person") || fileNameOnly.Contains("photo")) form.PersonPhotoPath = newRelative;
+                        else if (fileNameOnly.Contains("template") || fileNameOnly.Contains("finger")) form.TemplatePhotoPath = newRelative;
+                        else if (fileNameOnly.Contains("signed")) form.SignedPhysicalFormPath = newRelative;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to migrate plain biometric file to encrypted: {File}", plainFile);
+                }
+            }
+        }
+
+        if (convertedCount > 0)
+        {
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Successfully migrated {Count} plain biometric images to AES-256 encrypted vault storage.", convertedCount);
+        }
+
+        return convertedCount;
+    }
+
+    private string ResolveFullPath(string relativePath)
+    {
+        var clean = relativePath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+        if (clean.StartsWith("storage" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            clean = clean.Substring("storage".Length + 1);
+        }
+        if (clean.StartsWith("biometric_forms" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            clean = clean.Substring("biometric_forms".Length + 1);
+        }
+        return Path.Combine(_storageBasePath, clean);
+    }
+
+    private static string DetectImageContentType(ReadOnlySpan<byte> bytes, string fallbackPath)
+    {
+        if (bytes.Length >= 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+            return "image/png";
+        if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            return "image/jpeg";
+        if (bytes.Length >= 4 && bytes[0] == 0x25 && bytes[1] == 0x50 && bytes[2] == 0x44 && bytes[3] == 0x46)
+            return "application/pdf";
+        return fallbackPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || fallbackPath.EndsWith(".png.enc", StringComparison.OrdinalIgnoreCase)
+            ? "image/png"
+            : "image/jpeg";
+    }
+
+    private static string DetectDocumentContentType(ReadOnlySpan<byte> bytes, string fallbackPath)
+    {
+        if (bytes.Length >= 4 && bytes[0] == 0x25 && bytes[1] == 0x50 && bytes[2] == 0x44 && bytes[3] == 0x46)
+            return "application/pdf";
+        return DetectImageContentType(bytes, fallbackPath);
     }
 }

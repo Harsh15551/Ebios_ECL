@@ -61,6 +61,12 @@ public static class DbInitializer
                 ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""PasswordResetOtpExpiry"" timestamp with time zone;
                 ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""EmergencyLoginOtp"" text;
                 ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""EmergencyLoginOtpExpiry"" timestamp with time zone;
+                ALTER TABLE ""EmployeeBiometricForms"" ADD COLUMN IF NOT EXISTS ""HasAadhaarConsent"" boolean NOT NULL DEFAULT true;
+                ALTER TABLE ""EmployeeBiometricForms"" ADD COLUMN IF NOT EXISTS ""ConsentTimestamp"" timestamp with time zone;
+                UPDATE ""EmployeeBiometricForms""
+                SET ""AadhaarNumber"" = 'XXXX-XXXX-' || RIGHT(REPLACE(REPLACE(""AadhaarNumber"", ' ', ''), '-', ''), 4)
+                WHERE LENGTH(REPLACE(REPLACE(""AadhaarNumber"", ' ', ''), '-', '')) = 12
+                  AND ""AadhaarNumber"" NOT LIKE 'XXXX%';
             ");
 
             // Sync admin email from ADMIN_EMERGENCY_EMAIL in .env if configured

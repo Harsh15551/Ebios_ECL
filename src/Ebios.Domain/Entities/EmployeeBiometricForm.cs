@@ -59,6 +59,8 @@ public class EmployeeBiometricForm
 
     // Status & Audit
     public bool IsCompleted { get; set; } = false;
+    public bool HasAadhaarConsent { get; set; } = true;
+    public DateTime? ConsentTimestamp { get; set; }
     public string? UpdatedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

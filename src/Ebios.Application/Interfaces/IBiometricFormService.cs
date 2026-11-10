@@ -50,5 +50,8 @@ public interface IBiometricFormService
     byte[] GenerateBulkCsvTemplate();
     Task<List<BiometricFormDto>> GetFormsForBulkPrintAsync(int? areaId, int? subAreaId, string? search, bool? isFlagged = null);
     string GetPhysicalStoragePath(string empCode);
+    Task<(byte[] FileBytes, string ContentType)?> GetPhotoBytesAsync(string empCode, string boxType);
+    Task<(byte[] FileBytes, string ContentType)?> GetSignedFormBytesAsync(string empCode);
+    Task<int> EncryptAllExistingPlainImagesAsync();
 }
 

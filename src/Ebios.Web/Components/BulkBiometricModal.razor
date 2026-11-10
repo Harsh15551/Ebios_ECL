@@ -57,15 +57,28 @@
 
                             <hr class="my-3" />
 
+                            <div class="alert alert-info py-2 small mb-3">
+                                <i class="bi bi-shield-lock-fill text-primary me-1"></i>
+                                <strong>Aadhaar Data Vault Protection:</strong> 12-digit Aadhaar numbers in the CSV are automatically masked (<code>XXXX-XXXX-1234</code>) in the database in compliance with UIDAI regulations.
+                            </div>
+
                             <div class="mb-3">
                                 <h6 class="fw-bold mb-1">Step 2: Upload Completed CSV</h6>
                                 <p class="text-muted small mb-2">Select the filled CSV file from your computer to populate particulars in bulk.</p>
                                 
+                                <div class="form-check p-2 bg-light border border-info rounded mb-3 text-start">
+                                    <input class="form-check-input ms-0 me-2" type="checkbox" id="bulkCsvConsentCheck" @bind="bulkConsentConfirmed" />
+                                    <label class="form-check-label small fw-bold text-dark" for="bulkCsvConsentCheck">
+                                        <i class="bi bi-shield-check text-success me-1"></i>
+                                        I confirm that the worker particulars are being uploaded with valid employee consent for mine-gate attendance.
+                                    </label>
+                                </div>
+
                                 <div class="border border-dashed rounded p-4 text-center bg-light">
                                     <i class="bi bi-cloud-arrow-up fs-1 text-primary mb-2 d-block"></i>
-                                    <label class="btn btn-primary px-4 py-2" style="cursor: pointer;">
+                                    <label class="btn btn-primary px-4 py-2 @(!bulkConsentConfirmed ? "disabled" : "")" style="cursor: pointer;">
                                         <span>Browse CSV File</span>
-                                        <InputFile OnChange="HandleCsvUpload" accept=".csv" class="d-none" />
+                                        <InputFile OnChange="HandleCsvUpload" accept=".csv" class="d-none" disabled="@(!bulkConsentConfirmed)" />
                                     </label>
                                     <div class="text-muted small mt-2">Accepts UTF-8 encoded .csv files</div>
                                 </div>
@@ -84,17 +97,29 @@
                                 <code>archive.zip &rarr; ECL-7001/aadhaar.jpg, ECL-7001/photo.jpg, ECL-7001/idcard.jpg, ECL-7001/template.jpg</code>
                                 <div class="mt-2"><strong>Option C (Flat files with EmpCode prefix):</strong></div>
                                 <code>archive.zip &rarr; ECL-7001_aadhaar.jpg, ECL-7001_photo.jpg, ECL-7001_idcard.jpg, ECL-7001_template.jpg</code>
+                                <div class="text-danger small mt-2">
+                                    <i class="bi bi-shield-exclamation me-1"></i>
+                                    <strong>UIDAI Requirement:</strong> All Aadhaar images inside <code>aadhar/</code> must be masked copies (first 8 digits hidden, e.g. <code>XXXX-XXXX-1234</code>).
+                                </div>
                             </div>
 
                             <div class="mb-3">
                                 <h6 class="fw-bold mb-1">Upload ZIP Archive</h6>
                                 <p class="text-muted small mb-2">The system will automatically match each photo to its employee and form box, compressing and storing them on server storage.</p>
                                 
+                                <div class="form-check p-2 bg-light border border-info rounded mb-3 text-start">
+                                    <input class="form-check-input ms-0 me-2" type="checkbox" id="bulkZipConsentCheck" @bind="bulkConsentConfirmed" />
+                                    <label class="form-check-label small fw-bold text-dark" for="bulkZipConsentCheck">
+                                        <i class="bi bi-shield-check text-success me-1"></i>
+                                        I confirm that all uploaded Aadhaar documents are in masked format and worker consent has been obtained in compliance with UIDAI guidelines.
+                                    </label>
+                                </div>
+
                                 <div class="border border-dashed rounded p-4 text-center bg-light">
                                     <i class="bi bi-file-earmark-zip fs-1 text-success mb-2 d-block"></i>
-                                    <label class="btn btn-success px-4 py-2" style="cursor: pointer;">
+                                    <label class="btn btn-success px-4 py-2 @(!bulkConsentConfirmed ? "disabled" : "")" style="cursor: pointer;">
                                         <span>Browse ZIP Archive</span>
-                                        <InputFile OnChange="HandleZipUpload" accept=".zip" class="d-none" />
+                                        <InputFile OnChange="HandleZipUpload" accept=".zip" class="d-none" disabled="@(!bulkConsentConfirmed)" />
                                     </label>
                                     <div class="text-muted small mt-2">Up to 250MB per ZIP batch</div>
                                 </div>
@@ -158,6 +183,7 @@
 
     private string activeTab = "csv";
     private bool isProcessing = false;
+    private bool bulkConsentConfirmed = true;
     private BulkBiometricImportResult? result;
 
     private void SetTab(string tab)

@@ -208,6 +208,11 @@
                                                     <i class="bi bi-upload me-1"></i> Choose File
                                                     <InputFile OnChange="@(e => UploadPhotoAsync(e, "aadhaar"))" accept="image/*" class="d-none" />
                                                 </label>
+                                                <div class="mt-1">
+                                                    <span class="badge bg-info-subtle text-dark border border-info text-wrap" style="font-size: 0.65rem;" title="UIDAI Rule: First 8 digits must be masked">
+                                                        <i class="bi bi-shield-lock-fill text-primary me-1"></i>Masked Aadhaar Only (XXXX-XXXX-1234)
+                                                    </span>
+                                                </div>
                                             </div>
                                         </td>
 
@@ -373,6 +378,28 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+
+                        <!-- Statutory Aadhaar Compliance & Worker Consent Declaration -->
+                        <div class="mt-3 p-2 border rounded bg-light" style="font-size: 0.76rem;">
+                            <strong>Statutory Declaration:</strong> Aadhaar number and biometric identifiers are collected in masked format (XXXX-XXXX-XXXX) with the employee's voluntary consent solely for mine-gate safety, access control, and attendance muster verification under Coal Mines Regulations, in compliance with UIDAI and DPDP Act guidelines.
+                        </div>
+
+                        <div class="no-print mt-2">
+                            <div class="form-check p-2 bg-white border @(consentError ? "border-danger" : "border-info") rounded">
+                                <input class="form-check-input ms-0 me-2" type="checkbox" id="aadhaarConsentCheck" @bind="Model.HasAadhaarConsent" />
+                                <label class="form-check-label small fw-bold text-dark" for="aadhaarConsentCheck">
+                                    <i class="bi bi-shield-check text-success me-1"></i>
+                                    I confirm that the uploaded Aadhaar document is masked (first 8 digits hidden, e.g. XXXX-XXXX-1234) and the worker has provided voluntary consent for biometric registration.
+                                </label>
+                            </div>
+                            @if (consentError)
+                            {
+                                <div class="text-danger small mt-1">
+                                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                    You must confirm the statutory Aadhaar masking and worker consent checkbox before saving.
+                                </div>
+                            }
                         </div>
 
                         <!-- SECTION 4: SCANNED SIGNED PAPER FORM (No-print, or download link) -->
@@ -545,6 +572,7 @@
     [Parameter] public string CurrentUser { get; set; } = "APM";
 
     private bool isSaving = false;
+    private bool consentError = false;
     private string? statusMessage;
     private string? errorMessage;
 
@@ -566,9 +594,18 @@
     private async Task SaveFormAsync()
     {
         if (Model == null) return;
-        isSaving = true;
         errorMessage = null;
         statusMessage = null;
+
+        if (!Model.HasAadhaarConsent)
+        {
+            consentError = true;
+            errorMessage = "Statutory worker consent and Aadhaar masking confirmation is mandatory before saving.";
+            return;
+        }
+        consentError = false;
+
+        isSaving = true;
 
         try
         {

@@ -9,65 +9,33 @@ public static class BiometricEndpoints
     {
         var group = app.MapGroup("/api/biometric-forms");
 
-        // 1. Photo endpoint
-        group.MapGet("/photo/{empCode}/{boxType}", (
+        // 1. Photo endpoint (AES-256-GCM in-memory decrypted stream)
+        group.MapGet("/photo/{empCode}/{boxType}", async (
             string empCode,
             string boxType,
-            [FromServices] IBiometricFormService biometricService,
-            [FromServices] IHostEnvironment env) =>
+            [FromServices] IBiometricFormService biometricService) =>
         {
-            var cleanEmpCode = Sanitize(empCode);
-            var cleanBox = Sanitize(boxType).ToLowerInvariant();
-
-            // Support either {empCode}_{box}.jpg or direct file match
-            var dir = Path.Combine(env.ContentRootPath, "storage", "biometric_forms", cleanEmpCode);
-            if (!Directory.Exists(dir))
+            var result = await biometricService.GetPhotoBytesAsync(empCode, boxType);
+            if (result == null || result.Value.FileBytes == null || result.Value.FileBytes.Length == 0)
             {
-                var altDir = Path.Combine(Directory.GetCurrentDirectory(), "storage", "biometric_forms", cleanEmpCode);
-                if (Directory.Exists(altDir)) dir = altDir;
-                else return Results.NotFound();
+                return Results.NotFound();
             }
 
-            var filePath = Path.Combine(dir, $"{cleanEmpCode}_{cleanBox}.jpg");
-            if (!File.Exists(filePath))
-            {
-                // Fallback: check if file without empCode prefix exists (e.g. aadhaar.jpg)
-                var alt = Path.Combine(dir, $"{cleanBox}.jpg");
-                if (File.Exists(alt)) filePath = alt;
-                else return Results.NotFound();
-            }
-
-            return Results.File(filePath, "image/jpeg", enableRangeProcessing: true);
+            return Results.File(result.Value.FileBytes, result.Value.ContentType, enableRangeProcessing: true);
         });
 
-        // 2. Signed form download / view endpoint
-        group.MapGet("/signed-form/{empCode}", (
+        // 2. Signed physical form download / view endpoint (AES-256-GCM in-memory decrypted stream)
+        group.MapGet("/signed-form/{empCode}", async (
             string empCode,
-            [FromServices] IHostEnvironment env) =>
+            [FromServices] IBiometricFormService biometricService) =>
         {
-            var cleanEmpCode = Sanitize(empCode);
-            var dir = Path.Combine(env.ContentRootPath, "storage", "biometric_forms", cleanEmpCode);
-            if (!Directory.Exists(dir))
+            var result = await biometricService.GetSignedFormBytesAsync(empCode);
+            if (result == null || result.Value.FileBytes == null || result.Value.FileBytes.Length == 0)
             {
-                var altDir = Path.Combine(Directory.GetCurrentDirectory(), "storage", "biometric_forms", cleanEmpCode);
-                if (Directory.Exists(altDir)) dir = altDir;
-                else return Results.NotFound();
+                return Results.NotFound();
             }
 
-            // Look for _signed_form.*
-            var files = Directory.GetFiles(dir, $"{cleanEmpCode}_signed_form.*");
-            if (files.Length == 0)
-            {
-                // check for any pdf
-                files = Directory.GetFiles(dir, "*.pdf");
-                if (files.Length == 0) return Results.NotFound();
-            }
-
-            var target = files[0];
-            var ext = Path.GetExtension(target).ToLowerInvariant();
-            var contentType = ext == ".pdf" ? "application/pdf" : "image/jpeg";
-
-            return Results.File(target, contentType, enableRangeProcessing: true);
+            return Results.File(result.Value.FileBytes, result.Value.ContentType, enableRangeProcessing: true);
         });
 
         // 3. Download CSV Template endpoint
@@ -79,12 +47,4 @@ public static class BiometricEndpoints
 
         return app;
     }
-
-    private static string Sanitize(string input)
-    {
-        var clean = input?.Trim() ?? "";
-        var invalid = Path.GetInvalidFileNameChars();
-        return new string(clean.Where(c => !invalid.Contains(c) && c != '/' && c != '\\').ToArray());
-    }
 }
-

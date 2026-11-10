@@ -26,6 +26,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHttpClient<IEbiosSoapService, EbiosSoapService>();
 
 // 3. Register Application Services (Dependency Injection)
+builder.Services.AddSingleton<IBiometricCryptoService, BiometricCryptoService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IAreaService, AreaService>();
@@ -51,6 +52,10 @@ using (var scope = app.Services.CreateScope())
     {
         var context = services.GetRequiredService<AppDbContext>();
         await DbInitializer.InitializeAsync(context, app.Logger);
+
+        // Migrate any pre-existing unencrypted biometric photos to AES-256 encrypted vault format
+        var biometricService = services.GetRequiredService<IBiometricFormService>();
+        await biometricService.EncryptAllExistingPlainImagesAsync();
     }
     catch (Exception ex)
     {
