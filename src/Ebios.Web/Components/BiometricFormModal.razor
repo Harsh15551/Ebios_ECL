@@ -42,6 +42,15 @@
                             </button>
                         </div>
                     }
+                    else
+                    {
+                        <div class="alert alert-info py-2 px-3 d-flex align-items-center gap-2 mb-3 no-print">
+                            <span class="fs-5">👤</span>
+                            <div>
+                                <strong>Active Onboarded Worker:</strong> <code>@Model.EmpCode</code> is linked to an active employee profile. Saving will update biometric particulars and photographs.
+                            </div>
+                        </div>
+                    }
 
                     @if (!string.IsNullOrEmpty(statusMessage))
                     {
@@ -439,8 +448,15 @@
             overflow: visible !important;
         }
 
-        /* Completely remove all page layout outside the modal from the print tree */
-        body > *:not(.modal) {
+        /* Hide layout navigation, sidebar, top-row, and outer page elements */
+        .sidebar, .top-row, .navbar, header, nav, .card:not(.modal *), .btn:not(.modal *), .alert:not(.modal *), .no-print, .no-print * {
+            display: none !important;
+        }
+
+        /* Hide all page content siblings outside the modal */
+        article.content > *:not(.modal),
+        main > *:not(article),
+        .page > *:not(main) {
             display: none !important;
         }
 

@@ -802,69 +802,91 @@ public class BiometricFormService : IBiometricFormService
                     try
                     {
                         // Determine EmpCode and box type
-                        // Examples:
-                        // TSA011/aadhaar.jpg
-                        // TSA011/TSA011_person.jpg
-                        // TSA011_idcard.jpg
+                        // Supports:
+                        // Option 1 (Category folders): aadhar/ECL-7001.jpg, photo/ECL-7001.jpg, idcard/ECL-7001.jpg, fingerprint/ECL-7001.jpg
+                        // Option 2 (Worker folders): ECL-7001/aadhaar.jpg, ECL-7001/photo.jpg, ECL-7001/idcard.jpg, ECL-7001/template.jpg
+                        // Option 3 (Flat files): ECL-7001_aadhaar.jpg, ECL-7001_photo.jpg, ECL-7001_idcard.jpg, ECL-7001_template.jpg
                         string empCode = "";
                         string fileName = entry.Name;
                         string fullName = entry.FullName.Replace('\\', '/');
 
-                        var pathParts = fullName.Split('/');
-                        if (pathParts.Length > 1 && !string.IsNullOrWhiteSpace(pathParts[0]))
+                        var pathParts = fullName.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (pathParts.Length == 0) continue;
+
+                        string? boxType = null;
+                        bool isSignedHardcopy = false;
+
+                        // Check if any folder segment matches a known box category (Option 1)
+                        string? folderCategory = null;
+                        for (int i = 0; i < pathParts.Length - 1; i++)
                         {
-                            empCode = pathParts[0].Trim();
+                            var cat = DetectBoxCategory(pathParts[i]);
+                            if (cat != null)
+                            {
+                                folderCategory = cat;
+                                break;
+                            }
+                        }
+
+                        if (folderCategory != null)
+                        {
+                            // Category folder mode: folder defines box, filename defines worker code
+                            boxType = folderCategory;
+                            var rawName = Path.GetFileNameWithoutExtension(fileName).Trim();
+                            empCode = CleanEmpCodeFromSuffix(rawName);
                         }
                         else
                         {
-                            // Flat structure: TSA011_aadhaar.jpg
-                            var nameOnly = Path.GetFileNameWithoutExtension(fileName);
-                            var split = nameOnly.Split(new[] { '_', '-' }, 2);
-                            if (split.Length >= 2)
+                            // Worker folder or Flat file mode: filename defines box
+                            var fileCategory = DetectBoxCategory(fileName);
+                            if (fileCategory != null)
                             {
-                                empCode = split[0].Trim();
+                                boxType = fileCategory;
+                                if (pathParts.Length > 1)
+                                {
+                                    // Worker folder: ECL-7001/aadhaar.jpg
+                                    empCode = pathParts[pathParts.Length - 2].Trim();
+                                }
+                                else
+                                {
+                                    // Flat file: ECL-7001_aadhaar.jpg or aadhaar_ECL-7001.jpg
+                                    var nameOnly = Path.GetFileNameWithoutExtension(fileName);
+                                    var split = nameOnly.Split(new[] { '_', '-' }, 2);
+                                    if (split.Length >= 2)
+                                    {
+                                        if (DetectBoxCategory(split[0]) != null)
+                                            empCode = split[1].Trim();
+                                        else
+                                            empCode = split[0].Trim();
+                                    }
+                                    else
+                                    {
+                                        empCode = nameOnly.Trim();
+                                    }
+                                }
                             }
+                        }
+
+                        if (boxType == "signed_form")
+                        {
+                            isSignedHardcopy = true;
                         }
 
                         if (string.IsNullOrWhiteSpace(empCode))
                         {
                             result.FailureCount++;
-                            result.Errors.Add($"Skipped '{entry.FullName}': could not determine EmpCode from folder name or file prefix.");
+                            result.Errors.Add($"Skipped '{entry.FullName}': could not determine worker code from folder or filename.");
+                            continue;
+                        }
+
+                        if (boxType == null && !isSignedHardcopy)
+                        {
+                            result.FailureCount++;
+                            result.Errors.Add($"File '{entry.FullName}': unrecognized box category. Expected aadhar, idcard, photo/person, fingerprint/template, or signed form.");
                             continue;
                         }
 
                         var safeEmpCode = SanitizeEmpCode(empCode);
-                        var lowerName = fileName.ToLowerInvariant();
-
-                        string? boxType = null;
-                        bool isSignedHardcopy = false;
-
-                        if (lowerName.Contains("aadhaar") || lowerName.Contains("aadhar") || lowerName.EndsWith("_1.jpg") || lowerName.EndsWith("-1.jpg"))
-                        {
-                            boxType = "aadhaar";
-                        }
-                        else if (lowerName.Contains("idcard") || lowerName.Contains("id_card") || lowerName.Contains("voter") || lowerName.Contains("pan") || lowerName.EndsWith("_2.jpg") || lowerName.EndsWith("-2.jpg"))
-                        {
-                            boxType = "idcard";
-                        }
-                        else if (lowerName.Contains("person") || lowerName.Contains("face") || lowerName.Contains("photo") || lowerName.Contains("worker") || lowerName.EndsWith("_3.jpg") || lowerName.EndsWith("-3.jpg"))
-                        {
-                            boxType = "person";
-                        }
-                        else if (lowerName.Contains("template") || lowerName.Contains("machine") || lowerName.Contains("finger") || lowerName.Contains("fp") || lowerName.EndsWith("_4.jpg") || lowerName.EndsWith("-4.jpg"))
-                        {
-                            boxType = "template";
-                        }
-                        else if (lowerName.Contains("signed") || lowerName.Contains("form") || lowerName.EndsWith(".pdf"))
-                        {
-                            isSignedHardcopy = true;
-                        }
-                        else
-                        {
-                            result.FailureCount++;
-                            result.Errors.Add($"File '{entry.FullName}': unrecognized box name. Expected aadhaar, idcard, person, template, or signed form.");
-                            continue;
-                        }
 
                         using var entryStream = entry.Open();
                         if (isSignedHardcopy)
@@ -1061,6 +1083,40 @@ public class BiometricFormService : IBiometricFormService
         if (b.Contains("person") || b.Contains("face") || b.Contains("photo") || b == "3") return "person";
         if (b.Contains("template") || b.Contains("machine") || b.Contains("finger") || b == "4") return "template";
         return null;
+    }
+
+    private static string? DetectBoxCategory(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var lower = text.ToLowerInvariant();
+        if (lower.Contains("aadhaar") || lower.Contains("aadhar") || lower.EndsWith("_1.jpg") || lower.EndsWith("-1.jpg"))
+            return "aadhaar";
+        if (lower.Contains("idcard") || lower.Contains("id_card") || lower.Contains("voter") || lower.Contains("pan") || lower == "id" || lower.EndsWith("_2.jpg") || lower.EndsWith("-2.jpg"))
+            return "idcard";
+        if (lower.Contains("person") || lower.Contains("face") || lower.Contains("photo") || lower.Contains("worker") || lower.Contains("employee") || lower.EndsWith("_3.jpg") || lower.EndsWith("-3.jpg"))
+            return "person";
+        if (lower.Contains("template") || lower.Contains("machine") || lower.Contains("finger") || lower.Contains("fp") || lower.Contains("biometric") || lower.EndsWith("_4.jpg") || lower.EndsWith("-4.jpg"))
+            return "template";
+        if (lower.Contains("signed") || lower.Contains("hardcopy") || lower.Contains("form") || lower.EndsWith(".pdf"))
+            return "signed_form";
+        return null;
+    }
+
+    private static string CleanEmpCodeFromSuffix(string raw)
+    {
+        var lower = raw.ToLowerInvariant();
+        var tags = new[] { 
+            "_aadhaar", "_aadhar", "_idcard", "_id_card", "_person", "_photo", "_worker", "_template", "_finger", "_fp", "_signed", "_form",
+            "-aadhaar", "-aadhar", "-idcard", "-id_card", "-person", "-photo", "-worker", "-template", "-finger", "-fp", "-signed", "-form" 
+        };
+        foreach (var tag in tags)
+        {
+            if (lower.EndsWith(tag))
+            {
+                return raw.Substring(0, raw.Length - tag.Length).Trim('_', '-').Trim();
+            }
+        }
+        return raw.Trim();
     }
 
     private static List<string> ParseCsvRow(string line)

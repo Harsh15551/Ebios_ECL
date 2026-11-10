@@ -188,9 +188,24 @@ else
                                         </button>
                                         @if (!dev.IsSyncedToEbios)
                                         {
-                                            <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncDeviceAsync(dev))" title="Retry push terminal to eBios">
-                                                Retry Sync
-                                            </button>
+                                            @if (syncingDeviceId == dev.Id)
+                                            {
+                                                <button class="btn btn-sm btn-outline-secondary me-1" disabled>
+                                                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Syncing...
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncDeviceAsync(dev))" title="Retry push terminal to eBios">
+                                                    Retry Sync
+                                                </button>
+                                            }
+                                            @if (inlineSyncDeviceId == dev.Id && !string.IsNullOrEmpty(inlineSyncDeviceMsg))
+                                            {
+                                                <span class="badge @(inlineSyncDeviceSuccess ? "bg-success" : "bg-danger") ms-1 small">
+                                                    @inlineSyncDeviceMsg
+                                                </span>
+                                            }
                                         }
                                     }
                                     else
@@ -713,24 +728,42 @@ else
         }
     }
 
+    private int? syncingDeviceId;
+    private int? inlineSyncDeviceId;
+    private string? inlineSyncDeviceMsg;
+    private bool inlineSyncDeviceSuccess;
+
     private async Task SyncDeviceAsync(DeviceDto dev)
     {
+        syncingDeviceId = dev.Id;
+        inlineSyncDeviceId = dev.Id;
+        inlineSyncDeviceMsg = null;
         try
         {
             var (synced, msg) = await DeviceService.SyncDeviceAsync(dev.Id);
             if (synced)
             {
+                inlineSyncDeviceSuccess = true;
+                inlineSyncDeviceMsg = "✓ Synced";
                 successMessage = $"Device {dev.SerialNumber} synchronized to biometric system.";
                 devices = await DeviceService.GetDevicesAsync();
             }
             else
             {
+                inlineSyncDeviceSuccess = false;
+                inlineSyncDeviceMsg = "⚠️ Server Offline";
                 errorMessage = $"Failed to synchronize device {dev.SerialNumber}: {msg}";
             }
         }
         catch (Exception ex)
         {
+            inlineSyncDeviceSuccess = false;
+            inlineSyncDeviceMsg = "⚠️ Error";
             errorMessage = $"Sync error: {ex.Message}";
+        }
+        finally
+        {
+            syncingDeviceId = null;
         }
     }
 }

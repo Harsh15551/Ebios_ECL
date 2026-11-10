@@ -1,8 +1,7 @@
-# ECL eBios - Bulk Attendance Regularization Template
-# Format 1 (Standard Shift): EmpCode,Date,InTime,OutTime,Reason
-# Format 2 (Cross-Midnight Night Shift): EmpCode,DateIn,InTime,DateOut,OutTime,Reason
-EmpCode,Date,InTime,OutTime,Reason
-ECL-7001,2026-11-04,08:30:00,16:30:00,Pithead turnstile power failure
-ECL-7002,2026-11-04,,17:00:00,Missed OUT punch (preserves existing 8am punch)
-ECL-7003,2026-11-04,08:45:00,,Missed IN punch due to sensor fault
-ECL-7001,2026-11-06,22:00:00,2026-11-07,06:00:00,Night shift cross-midnight regularization
+EmpCode,InDate,InTime,OutDate,OutTime,Reason,ShiftCode
+ECL-7001,2026-11-06,08:30:00,2026-11-06,16:30:00,Pithead turnstile power failure,General
+ECL-7002,2026-11-06,22:00:00,2026-11-07,06:00:00,Night shift cross-midnight regularization,Shift III
+ECL-7003,2026-11-06,09:00:00,2026-11-06,17:30:00,General shift sensor calibration,
+ECL-7004,2026-11-06,21:45:00,2026-11-07,06:15:00,Auto-fetch night shift,
+ECL-7005,2026-11-06,06:00:00,2026-11-06,14:00:00,Morning shift regularized,Shift I
+ECL-7006,2026-11-06,14:00:00,2026-11-06,22:00:00,Afternoon shift regularized,Shift II

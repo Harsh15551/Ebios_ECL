@@ -24,6 +24,7 @@ scratch/**
 scratch_photos/
 scratch_photos/**
 bulk_regularization_*.csv
+sample_bulk_biometrics_*.zip
 essl_logo_1.webp
 
 # 4. Build Results & Artifacts
@@ -36,6 +37,7 @@ dist/**
 [Ll]og/
 [Ll]ogs/
 *.log
+*.binlog
 _ReSharper*/
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*

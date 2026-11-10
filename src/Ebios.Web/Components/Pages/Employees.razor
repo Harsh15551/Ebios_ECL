@@ -252,9 +252,24 @@ else
                                         <!-- Re-sync Button (Only shown if sync failed) -->
                                         @if (!emp.IsSyncedToEbios)
                                         {
-                                            <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncEmployeeAsync(emp))" title="Retry push worker to eBios">
-                                                Retry Sync
-                                            </button>
+                                            @if (syncingEmpId == emp.Id)
+                                            {
+                                                <button class="btn btn-sm btn-outline-secondary me-1" disabled>
+                                                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Syncing...
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-sm btn-outline-danger me-1" @onclick="@(() => SyncEmployeeAsync(emp))" title="Retry push worker to eBios">
+                                                    Retry Sync
+                                                </button>
+                                            }
+                                            @if (inlineSyncEmpId == emp.Id && !string.IsNullOrEmpty(inlineSyncMessage))
+                                            {
+                                                <span class="badge @(inlineSyncSuccess ? "bg-success" : "bg-danger") ms-1 small">
+                                                    @inlineSyncMessage
+                                                </span>
+                                            }
                                         }
                                     }
                                     else
@@ -1528,24 +1543,42 @@ else
         }
     }
 
+    private int? syncingEmpId;
+    private int? inlineSyncEmpId;
+    private string? inlineSyncMessage;
+    private bool inlineSyncSuccess;
+
     private async Task SyncEmployeeAsync(EmployeeDto emp)
     {
+        syncingEmpId = emp.Id;
+        inlineSyncEmpId = emp.Id;
+        inlineSyncMessage = null;
         try
         {
             var synced = await EmployeeService.SyncEmployeeAsync(emp.Id);
             if (synced)
             {
+                inlineSyncSuccess = true;
+                inlineSyncMessage = "✓ Synced";
                 successMessage = $"Worker {emp.EmpCode} synchronized to biometric turnstiles.";
                 await LoadDataAsync();
             }
             else
             {
-                errorMessage = $"Failed to synchronize worker {emp.EmpCode}.";
+                inlineSyncSuccess = false;
+                inlineSyncMessage = "⚠️ Server Offline";
+                errorMessage = $"Failed to synchronize worker {emp.EmpCode}. eBioServer is offline or unreachable.";
             }
         }
         catch (Exception ex)
         {
+            inlineSyncSuccess = false;
+            inlineSyncMessage = "⚠️ Error";
             errorMessage = $"Sync error: {ex.Message}";
+        }
+        finally
+        {
+            syncingEmpId = null;
         }
     }
 
@@ -1924,7 +1957,7 @@ else
                 UserSession.CurrentUser?.Role.ToString());
             if (errors.Count == 0)
             {
-                successMessage = $"Successfully onboarded/updated {successCount} worker(s). Past punches automatically linked!";
+                successMessage = $"Successfully saved/updated {successCount} worker(s) in local database. Past punches automatically linked! (Turnstile hardware sync processed / queued for retry if offline).";
                 CloseBulkEmployeeModal();
                 await LoadDataAsync();
             }

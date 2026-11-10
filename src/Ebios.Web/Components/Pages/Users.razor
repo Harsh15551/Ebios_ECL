@@ -241,7 +241,18 @@ else
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Temporary Password <span class="text-danger">*</span></label>
-                            <input type="password" class="form-control" placeholder="••••••••" @bind="newPassword" />
+                            <div class="input-group">
+                                <input type="@(showNewPassword ? "text" : "password")" 
+                                       class="form-control" 
+                                       placeholder="••••••••" 
+                                       @bind="newPassword" />
+                                <button class="btn btn-outline-secondary" 
+                                        type="button" 
+                                        @onclick="() => showNewPassword = !showNewPassword" 
+                                        title="@(showNewPassword ? "Hide password" : "Show password")">
+                                    <i class="bi @(showNewPassword ? "bi-eye-slash" : "bi-eye")"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -521,6 +532,7 @@ else
     private string newFullName = string.Empty;
     private string newEmail = string.Empty;
     private string newPassword = string.Empty;
+    private bool showNewPassword = false;
     private UserRole newRole = UserRole.AreaPersonnelManager;
     private int newAreaId = 0;
     private int newSubAreaId = 0;
@@ -588,6 +600,7 @@ else
         newFullName = string.Empty;
         newEmail = string.Empty;
         newPassword = string.Empty;
+        showNewPassword = false;
         newRole = UserRole.AreaPersonnelManager;
         newAreaId = areas.FirstOrDefault()?.Id ?? 0;
         newSubAreaId = subAreas.FirstOrDefault()?.Id ?? 0;
@@ -600,6 +613,7 @@ else
     private void CloseCreateModal()
     {
         showCreateModal = false;
+        showNewPassword = false;
         modalError = null;
     }
 

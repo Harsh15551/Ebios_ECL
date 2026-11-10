@@ -829,9 +829,13 @@ public class EmployeeService : IEmployeeService
         }
 
         var matchingEmployees = await query.ToListAsync();
+        var matchedCodeSet = matchingEmployees.Select(e => e.EmpCode.ToUpperInvariant()).ToHashSet();
+        var notFoundCodes = normalizedCodes.Where(c => !matchedCodeSet.Contains(c.ToUpperInvariant())).ToList();
+
         if (!matchingEmployees.Any())
         {
-            return (0, 0, "No matching employees found within your permitted jurisdiction.");
+            string notFoundDetails = notFoundCodes.Any() ? $" Worker codes not found in database: [{string.Join(", ", notFoundCodes)}]." : "";
+            return (0, validEntries.Count, $"No matching employees found within your permitted jurisdiction.{notFoundDetails}");
         }
 
         bool isBlacklist = reason.Contains("Blacklist", StringComparison.OrdinalIgnoreCase);
@@ -866,7 +870,11 @@ public class EmployeeService : IEmployeeService
             .GroupBy(e => e.EmpCode)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        int hardwareAttemptedCount = 0;
         int hardwareDispatchedCount = 0;
+        int hardwareFailedCount = 0;
+        var invalidDevices = new List<string>();
+        int modifiedEmployeesCount = 0;
 
         foreach (var emp in matchingEmployees)
         {
@@ -897,6 +905,7 @@ public class EmployeeService : IEmployeeService
                 .ToHashSet();
 
             var empEntries = entriesByEmp.ContainsKey(empCodeUpper) ? entriesByEmp[empCodeUpper] : new List<BulkBlockEntryDto>();
+            bool empModified = false;
 
             foreach (var item in empEntries)
             {
@@ -911,49 +920,83 @@ public class EmployeeService : IEmployeeService
                 {
                     if (isAllDevices)
                     {
-                        emp.IsActive = true;
-                        emp.IsBlacklisted = false;
-                        emp.StatusReason = null;
-                        emp.BlockedDeviceSerials = null;
-                        currentBlocked.Clear();
-
+                        var successfulUnblocks = new List<string>();
                         foreach (var dev in empAllDevices)
                         {
+                            hardwareAttemptedCount++;
                             try
                             {
                                 var (success, _) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(dev.SerialNumber, emp.EmpCode, blockUser: false);
-                                if (success) hardwareDispatchedCount++;
+                                if (success)
+                                {
+                                    hardwareDispatchedCount++;
+                                    successfulUnblocks.Add(dev.SerialNumber.ToUpperInvariant());
+                                }
+                                else hardwareFailedCount++;
                             }
                             catch (Exception ex)
                             {
+                                hardwareFailedCount++;
                                 _logger.LogWarning(ex, "Unblock failed for {Code} on device {Serial}", emp.EmpCode, dev.SerialNumber);
                             }
+                        }
+
+                        // Only alter employee DB state if turnstile confirmed the command
+                        if (successfulUnblocks.Any())
+                        {
+                            foreach (var s in successfulUnblocks) currentBlocked.Remove(s);
+                            emp.BlockedDeviceSerials = currentBlocked.Any() ? string.Join(",", currentBlocked) : null;
+                            if (!currentBlocked.Any())
+                            {
+                                emp.IsActive = true;
+                                emp.IsBlacklisted = false;
+                                emp.StatusReason = null;
+                            }
+                            empModified = true;
                         }
                     }
                     else
                     {
-                        string targetSerial = item.DeviceSerialNumber!.ToUpperInvariant();
-                        currentBlocked.Remove(targetSerial);
-                        emp.BlockedDeviceSerials = currentBlocked.Any() ? string.Join(",", currentBlocked) : null;
-                        if (!currentBlocked.Any())
+                        string rawTarget = item.DeviceSerialNumber!.Trim();
+                        var targetDev = empAllDevices.FirstOrDefault(d => 
+                            d.SerialNumber.Equals(rawTarget, StringComparison.OrdinalIgnoreCase) ||
+                            d.DeviceName.Equals(rawTarget, StringComparison.OrdinalIgnoreCase));
+
+                        if (targetDev == null)
                         {
-                            emp.IsActive = true;
-                            emp.IsBlacklisted = false;
-                            emp.StatusReason = null;
+                            invalidDevices.Add($"Worker {emp.EmpCode}: Device '{rawTarget}' does not exist or is not assigned to this worker's colliery.");
+                            continue;
                         }
 
-                        var targetDev = empAllDevices.FirstOrDefault(d => d.SerialNumber.Equals(targetSerial, StringComparison.OrdinalIgnoreCase));
-                        if (targetDev != null)
+                        hardwareAttemptedCount++;
+                        bool confirmed = false;
+                        try
                         {
-                            try
+                            var (success, _) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(targetDev.SerialNumber, emp.EmpCode, blockUser: false);
+                            if (success)
                             {
-                                var (success, _) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(targetDev.SerialNumber, emp.EmpCode, blockUser: false);
-                                if (success) hardwareDispatchedCount++;
+                                hardwareDispatchedCount++;
+                                confirmed = true;
                             }
-                            catch (Exception ex)
+                            else hardwareFailedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            hardwareFailedCount++;
+                            _logger.LogWarning(ex, "Unblock failed for {Code} on device {Serial}", emp.EmpCode, targetDev.SerialNumber);
+                        }
+
+                        if (confirmed)
+                        {
+                            currentBlocked.Remove(targetDev.SerialNumber.ToUpperInvariant());
+                            emp.BlockedDeviceSerials = currentBlocked.Any() ? string.Join(",", currentBlocked) : null;
+                            if (!currentBlocked.Any())
                             {
-                                _logger.LogWarning(ex, "Unblock failed for {Code} on device {Serial}", emp.EmpCode, targetDev.SerialNumber);
+                                emp.IsActive = true;
+                                emp.IsBlacklisted = false;
+                                emp.StatusReason = null;
                             }
+                            empModified = true;
                         }
                     }
                 }
@@ -961,70 +1004,149 @@ public class EmployeeService : IEmployeeService
                 {
                     if (isAllDevices)
                     {
-                        emp.IsActive = false;
-                        emp.IsBlacklisted = isBlacklist;
-                        emp.StatusReason = reason;
-                        emp.BlockedDeviceSerials = empAllDevices.Any() ? string.Join(",", empAllDevices.Select(d => d.SerialNumber)) : null;
-                        foreach (var d in empAllDevices) currentBlocked.Add(d.SerialNumber.ToUpperInvariant());
-
+                        var successfulBlocks = new List<string>();
                         foreach (var dev in empAllDevices)
                         {
+                            hardwareAttemptedCount++;
                             try
                             {
                                 var (success, _) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(dev.SerialNumber, emp.EmpCode, blockUser: true);
-                                if (success) hardwareDispatchedCount++;
+                                if (success)
+                                {
+                                    hardwareDispatchedCount++;
+                                    successfulBlocks.Add(dev.SerialNumber.ToUpperInvariant());
+                                }
+                                else hardwareFailedCount++;
                             }
                             catch (Exception ex)
                             {
+                                hardwareFailedCount++;
                                 _logger.LogWarning(ex, "Block failed for {Code} on device {Serial}", emp.EmpCode, dev.SerialNumber);
                             }
+                        }
+
+                        // Only alter employee DB state if turnstile confirmed the command
+                        if (successfulBlocks.Any())
+                        {
+                            foreach (var s in successfulBlocks) currentBlocked.Add(s);
+                            emp.BlockedDeviceSerials = currentBlocked.Any() ? string.Join(",", currentBlocked) : null;
+                            emp.StatusReason = reason;
+                            emp.IsBlacklisted = isBlacklist;
+                            if (empAllDevices.Any() && currentBlocked.Count >= empAllDevices.Count)
+                            {
+                                emp.IsActive = false;
+                            }
+                            empModified = true;
                         }
                     }
                     else
                     {
-                        string targetSerial = item.DeviceSerialNumber!.ToUpperInvariant();
-                        currentBlocked.Add(targetSerial);
-                        emp.BlockedDeviceSerials = currentBlocked.Any() ? string.Join(",", currentBlocked) : null;
-                        emp.StatusReason = reason;
-                        emp.IsBlacklisted = isBlacklist;
-                        if (empAllDevices.Any() && currentBlocked.Count >= empAllDevices.Count)
+                        string rawTarget = item.DeviceSerialNumber!.Trim();
+                        var targetDev = empAllDevices.FirstOrDefault(d => 
+                            d.SerialNumber.Equals(rawTarget, StringComparison.OrdinalIgnoreCase) ||
+                            d.DeviceName.Equals(rawTarget, StringComparison.OrdinalIgnoreCase));
+
+                        if (targetDev == null)
                         {
-                            emp.IsActive = false;
+                            invalidDevices.Add($"Worker {emp.EmpCode}: Device '{rawTarget}' does not exist or is not assigned to this worker's colliery.");
+                            continue;
                         }
 
-                        var targetDev = empAllDevices.FirstOrDefault(d => d.SerialNumber.Equals(targetSerial, StringComparison.OrdinalIgnoreCase));
-                        if (targetDev != null)
+                        hardwareAttemptedCount++;
+                        bool confirmed = false;
+                        try
                         {
-                            try
+                            var (success, _) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(targetDev.SerialNumber, emp.EmpCode, blockUser: true);
+                            if (success)
                             {
-                                var (success, _) = await _ebiosSoapService.BlockUnblockUserOnDeviceAsync(targetDev.SerialNumber, emp.EmpCode, blockUser: true);
-                                if (success) hardwareDispatchedCount++;
+                                hardwareDispatchedCount++;
+                                confirmed = true;
                             }
-                            catch (Exception ex)
+                            else hardwareFailedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            hardwareFailedCount++;
+                            _logger.LogWarning(ex, "Block failed for {Code} on device {Serial}", emp.EmpCode, targetDev.SerialNumber);
+                        }
+
+                        if (confirmed)
+                        {
+                            currentBlocked.Add(targetDev.SerialNumber.ToUpperInvariant());
+                            emp.BlockedDeviceSerials = currentBlocked.Any() ? string.Join(",", currentBlocked) : null;
+                            emp.StatusReason = reason;
+                            emp.IsBlacklisted = isBlacklist;
+                            if (empAllDevices.Any() && currentBlocked.Count >= empAllDevices.Count)
                             {
-                                _logger.LogWarning(ex, "Block failed for {Code} on device {Serial}", emp.EmpCode, targetDev.SerialNumber);
+                                emp.IsActive = false;
                             }
+                            empModified = true;
                         }
                     }
                 }
             }
+
+            if (empModified)
+            {
+                modifiedEmployeesCount++;
+            }
         }
 
-        await _context.SaveChangesAsync();
+        // If turnstiles were targeted but ZERO commands succeeded (eBioServer offline or connection refused), FAIL!
+        if (hardwareAttemptedCount > 0 && hardwareDispatchedCount == 0)
+        {
+            string failMsg = $"Operation Failed: Central Biometric Server (eBioServer) is offline or unreachable (0 of {hardwareAttemptedCount} turnstiles responded). No changes were made in the database, and workers are NOT blocked.";
+            if (invalidDevices.Any()) failMsg += $" ⚠️ {string.Join(" | ", invalidDevices)}";
+            if (notFoundCodes.Any()) failMsg += $" ⚠️ Nonexistent worker codes: [{string.Join(", ", notFoundCodes)}]";
+            return (0, validEntries.Count, failMsg);
+        }
+
+        if (modifiedEmployeesCount > 0)
+        {
+            await _context.SaveChangesAsync();
+        }
 
         var bulkSummary = new
         {
             Action = isBlacklist ? "Blacklist" : "Turnstile Access Update",
-            ProcessedCount = matchingEmployees.Count,
+            RequestedTotal = validEntries.Count,
+            ProcessedCount = modifiedEmployeesCount,
+            NotFoundCount = notFoundCodes.Count,
+            NotFoundWorkerCodes = notFoundCodes,
+            InvalidDevices = invalidDevices,
+            HardwareAttempted = hardwareAttemptedCount,
             HardwareCommandsDispatched = hardwareDispatchedCount,
+            HardwareCommandsFailed = hardwareFailedCount,
             Reason = reason,
             SampleWorkerCodes = matchingEmployees.Take(15).Select(e => e.EmpCode).ToList()
         };
 
+        var statusParts = new List<string>();
+        if (modifiedEmployeesCount > 0)
+        {
+            statusParts.Add($"Successfully updated {modifiedEmployeesCount} worker(s) ({hardwareDispatchedCount} of {hardwareAttemptedCount} turnstile commands confirmed).");
+        }
+        else
+        {
+            statusParts.Add("No workers were updated.");
+        }
+
+        if (invalidDevices.Any())
+        {
+            statusParts.Add($"⚠️ Device validation error: {string.Join(" | ", invalidDevices)}");
+        }
+
+        if (notFoundCodes.Any())
+        {
+            statusParts.Add($"⚠️ {notFoundCodes.Count} worker(s) NOT FOUND in database: [{string.Join(", ", notFoundCodes)}].");
+        }
+
+        string msg = string.Join(" ", statusParts);
+
         await _auditService.LogSecurityActionAsync(
             isBlacklist ? "BULK_WORKERS_BLACKLISTED" : "BULK_TURNSTILE_ACCESS_UPDATED",
-            $"BATCH:{matchingEmployees.Count}_WORKERS",
-            $"Bulk {bulkSummary.Action}: {matchingEmployees.Count} worker(s) updated across turnstiles (Reason: {reason}) by {performedByUsername ?? "Admin"}.",
+            $"BATCH:{modifiedEmployeesCount}_OF_{validEntries.Count}_WORKERS",
+            $"Bulk {bulkSummary.Action}: {modifiedEmployeesCount} of {validEntries.Count} worker(s) updated. {msg} (Reason: {reason}) by {performedByUsername ?? "Admin"}.",
             performedByUserId,
             performedByUsername ?? "admin",
             performedByOfficerName ?? performedByUsername ?? "System Admin",
@@ -1032,8 +1154,7 @@ public class EmployeeService : IEmployeeService
             null,
             JsonSerializer.Serialize(bulkSummary));
 
-        string msg = $"Successfully processed {matchingEmployees.Count} employee(s) across target turnstiles ({hardwareDispatchedCount} hardware commands dispatched).";
-        return (matchingEmployees.Count, matchingEmployees.Count, msg);
+        return (modifiedEmployeesCount, validEntries.Count, msg);
     }
 
     public async Task<bool> SyncEmployeeAsync(int id)
@@ -1315,6 +1436,9 @@ public class EmployeeService : IEmployeeService
                     }
                 }
 
+                int hardwareSyncedCount = 0;
+                int hardwareFailedCount = 0;
+
                 // Dispatch SOAP update with location code for each onboarded/updated worker
                 foreach (var emp in emps)
                 {
@@ -1335,11 +1459,17 @@ public class EmployeeService : IEmployeeService
                             {
                                 emp.IsSyncedToEbios = true;
                                 emp.LastSyncedAt = DateTime.UtcNow;
+                                hardwareSyncedCount++;
+                            }
+                            else
+                            {
+                                hardwareFailedCount++;
                             }
                         }
                     }
                     catch (Exception soapEx)
                     {
+                        hardwareFailedCount++;
                         _logger.LogWarning("SOAP sync warning in bulk onboarding for {Code}: {Msg}", emp.EmpCode, soapEx.Message);
                     }
                 }
@@ -1365,7 +1495,7 @@ public class EmployeeService : IEmployeeService
             await _auditService.LogSecurityActionAsync(
                 "BULK_WORKERS_IMPORTED",
                 $"BATCH:{successCount}_WORKERS",
-                $"Bulk CSV Import: Successfully onboarded/updated {successCount} of {entries.Count} workers by {performedByUsername ?? "Admin"}.",
+                $"Bulk CSV Import: Successfully saved {successCount} of {entries.Count} workers to local database by {performedByUsername ?? "Admin"}.",
                 performedByUserId,
                 performedByUsername ?? "admin",
                 performedByOfficerName ?? performedByUsername ?? "System Admin",

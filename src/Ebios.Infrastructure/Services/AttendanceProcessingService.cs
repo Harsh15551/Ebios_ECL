@@ -982,13 +982,35 @@ public class AttendanceProcessingService : IAttendanceProcessingService
 
                 if (summary == null)
                 {
-                    var roster = await _context.EmployeeShiftRosters
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(r => r.EmpCode.ToUpper() == cleanCode && r.RosterDate == targetDate);
+                    ShiftMaster? shift = null;
+                    if (!string.IsNullOrWhiteSpace(entry.ShiftCode))
+                    {
+                        shift = allShifts.FirstOrDefault(s => 
+                            s.ShiftCode.Equals(entry.ShiftCode.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                            s.ShiftName.Equals(entry.ShiftCode.Trim(), StringComparison.OrdinalIgnoreCase));
+                    }
 
-                    var shift = (roster != null ? allShifts.FirstOrDefault(s => s.Id == roster.ShiftId) ?? allShifts.FirstOrDefault(s => s.ShiftCode == roster.ShiftCode) : null)
-                             ?? allShifts.FirstOrDefault(s => s.ShiftCode == "General") 
-                             ?? allShifts.FirstOrDefault();
+                    if (shift == null)
+                    {
+                        var roster = await _context.EmployeeShiftRosters
+                            .AsNoTracking()
+                            .FirstOrDefaultAsync(r => r.EmpCode.ToUpper() == cleanCode && r.RosterDate == targetDate);
+
+                        shift = roster != null
+                            ? allShifts.FirstOrDefault(s => s.Id == roster.ShiftId) ?? allShifts.FirstOrDefault(s => s.ShiftCode == roster.ShiftCode)
+                            : null;
+                    }
+
+                    if (shift == null && entry.InTime.HasValue)
+                    {
+                        shift = ResolveShiftForPunch(entry.InTime.Value.TimeOfDay, allShifts, entry.OutTime?.TimeOfDay);
+                    }
+
+                    shift ??= allShifts.FirstOrDefault(s => s.ShiftCode == "General") ?? allShifts.FirstOrDefault();
+
+                    string initialRosterStatus = !string.IsNullOrWhiteSpace(entry.ShiftCode) && shift?.ShiftCode.Equals(entry.ShiftCode.Trim(), StringComparison.OrdinalIgnoreCase) == true
+                        ? "Manual-Overridden"
+                        : "Auto-Matched";
 
                     summary = new AttendanceDailySummary
                     {
@@ -1004,7 +1026,7 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                         IsVerified = emp != null,
                         IsFlagged = emp == null,
                         Status = emp?.IsHigherAuthority == true ? "Present" : "Single Punch",
-                        RosterStatus = roster != null ? "Assigned" : "Auto-Matched",
+                        RosterStatus = initialRosterStatus,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     };
@@ -1038,15 +1060,36 @@ public class AttendanceProcessingService : IAttendanceProcessingService
                 summary.IsSyncedToSap = false;
                 summary.UpdatedAt = DateTime.UtcNow;
 
+                // Explicit ShiftCode matching: If given and matches, use it; otherwise auto-fetch algorithm resolves
+                ShiftMaster? explicitShift = null;
                 if (!string.IsNullOrWhiteSpace(entry.ShiftCode))
                 {
-                    var newShift = allShifts.FirstOrDefault(s => s.ShiftCode.Equals(entry.ShiftCode.Trim(), StringComparison.OrdinalIgnoreCase));
-                    if (newShift != null)
+                    explicitShift = allShifts.FirstOrDefault(s => 
+                        s.ShiftCode.Equals(entry.ShiftCode.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                        s.ShiftName.Equals(entry.ShiftCode.Trim(), StringComparison.OrdinalIgnoreCase));
+                }
+
+                if (explicitShift != null)
+                {
+                    summary.ShiftId = explicitShift.Id;
+                    summary.ShiftCode = explicitShift.ShiftCode;
+                    summary.Shift = null;
+                    summary.RosterStatus = "Manual-Overridden";
+                }
+                else if (summary.FirstInTime.HasValue)
+                {
+                    // Auto-resolve best matching shift using punch timings (e.g. Shift III for 22:00 -> 06:00)
+                    var autoShift = ResolveShiftForPunch(
+                        summary.FirstInTime.Value.TimeOfDay,
+                        allShifts,
+                        summary.LastOutTime?.TimeOfDay);
+
+                    if (autoShift != null)
                     {
-                        summary.ShiftId = newShift.Id;
-                        summary.ShiftCode = newShift.ShiftCode;
+                        summary.ShiftId = autoShift.Id;
+                        summary.ShiftCode = autoShift.ShiftCode;
                         summary.Shift = null;
-                        summary.RosterStatus = "Manual-Overridden";
+                        summary.RosterStatus = "Auto-Matched";
                     }
                 }
 

@@ -271,8 +271,15 @@
             overflow: visible !important;
         }
 
-        /* Hide all outer document chrome outside the active modal */
-        body > *:not(.modal) {
+        /* Hide layout navigation, sidebar, top-row, and outer page elements */
+        .sidebar, .top-row, .navbar, header, nav, .card:not(.modal *), .btn:not(.modal *), .alert:not(.modal *), .no-print, .no-print * {
+            display: none !important;
+        }
+
+        /* Hide all page content siblings outside the modal */
+        article.content > *:not(.modal),
+        main > *:not(article),
+        .page > *:not(main) {
             display: none !important;
         }
 

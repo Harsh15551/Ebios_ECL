@@ -61,9 +61,9 @@
                 <i class="bi bi-cloud-arrow-up me-1"></i>
                 <span>Push to SFTP</span>
             </button>
-            <button class="btn btn-outline-dark btn-sm fw-semibold" @onclick="OpenBasicReportModal" title="Generate Daily Attendance Report (Basic Report)">
+            <button class="btn btn-outline-dark btn-sm fw-semibold" @onclick="OpenBasicReportModal" title="Generate Daily Attendance Report (Print / PDF)">
                 <i class="bi bi-file-earmark-pdf me-1 text-danger"></i>
-                <span>Basic Report</span>
+                <span>Report</span>
             </button>
             <button class="btn btn-outline-primary btn-sm" @onclick="RecalculateMusterRollAsync" disabled="@isRecalculating">
                 @if (isRecalculating)
@@ -405,7 +405,11 @@
                                             <span class="fw-bold text-danger font-monospace">@m.LastOutTime.Value.ToString("HH:mm:ss")</span>
                                             @if (m.FirstInTime.HasValue && m.LastOutTime.Value.Date > m.FirstInTime.Value.Date)
                                             {
-                                                <span class="badge bg-purple-subtle text-purple border ms-1" style="font-size: 0.68rem;" title="Exit punch recorded on next calendar day (@m.LastOutTime.Value.ToString("dd-MM-yyyy"))">+1 Day</span>
+                                                <span class="badge ms-1 fw-bold align-middle shadow-sm" 
+                                                      style="background-color: #59359a !important; color: #ffffff !important; font-size: 0.72rem; padding: 2px 7px; border-radius: 4px; letter-spacing: 0.3px; border: 1px solid #452479;" 
+                                                      title="Cross-Midnight Shift: Exit punch was recorded on the next calendar day (@m.LastOutTime.Value.ToString("dd-MM-yyyy"))">
+                                                    <i class="bi bi-moon-stars-fill me-1" style="font-size: 0.65rem;"></i>+1 Day
+                                                </span>
                                             }
                                             <small class="text-muted d-block text-truncate" style="max-width: 130px;" title="Machine: @m.OutSerialNumber">
                                                 @(m.OutDeviceName ?? m.OutSerialNumber ?? "Terminal")
@@ -872,8 +876,16 @@ else
                             <div class="col-6">
                                 <div class="border rounded p-2 bg-body-tertiary">
                                     <div class="text-muted" style="font-size: 0.75rem;">MACHINE OUT PUNCH</div>
-                                    <div class="fw-bold font-monospace text-danger">
-                                        @(selectedMusterRecord.LastOutTime.HasValue ? selectedMusterRecord.LastOutTime.Value.ToString("HH:mm:ss") : "— None (Missed)")
+                                    <div class="fw-bold font-monospace text-danger d-flex align-items-center">
+                                        <span>@(selectedMusterRecord.LastOutTime.HasValue ? selectedMusterRecord.LastOutTime.Value.ToString("HH:mm:ss") : "— None (Missed)")</span>
+                                        @if (selectedMusterRecord.FirstInTime.HasValue && selectedMusterRecord.LastOutTime.HasValue && selectedMusterRecord.LastOutTime.Value.Date > selectedMusterRecord.FirstInTime.Value.Date)
+                                        {
+                                            <span class="badge ms-2 fw-bold align-middle shadow-xs" 
+                                                  style="background-color: #59359a !important; color: #ffffff !important; font-size: 0.68rem; padding: 2px 6px; border-radius: 4px; border: 1px solid #452479;" 
+                                                  title="Cross-Midnight Shift: Exit punch was recorded on the next calendar day">
+                                                <i class="bi bi-moon-stars-fill me-1" style="font-size: 0.62rem;"></i>+1 Day
+                                            </span>
+                                        }
                                     </div>
                                     <small class="text-muted text-truncate d-block" title="@selectedMusterRecord.OutDeviceName">
                                         @(selectedMusterRecord.OutDeviceName ?? selectedMusterRecord.OutSerialNumber ?? "No Scan")
@@ -1019,16 +1031,18 @@ else
                     </div>
 
                     <div class="alert alert-info py-2 small mb-3">
-                        <strong>Supported Formats:</strong><br />
-                        &bull; <strong>Standard Shift:</strong> <code>EmpCode, Date, InTime, OutTime, Reason</code> (e.g. <code>ECL-7001, 2026-11-04, 08:30, 16:30, Power failure</code>)<br />
-                        &bull; <strong>Cross-Midnight Night Shift:</strong> <code>EmpCode, DateIn, InTime, DateOut, OutTime, Reason</code> (e.g. <code>ECL-7001, 2026-11-06, 22:00, 2026-11-07, 06:00, Night shift turnstile offline</code>)<br />
-                        <span class="text-muted">Tip: Leave InTime or OutTime empty to retain existing turnstile punches (e.g. <code>ECL-7001, 2026-11-04, , 17:00, Missed OUT punch</code> preserves existing 8 AM punch).</span>
+                        <strong>Standard Format:</strong><br />
+                        <code>EmpCode, InDate, InTime, OutDate, OutTime, Reason, [ShiftCode]</code><br />
+                        &bull; <strong>Direct Shift Option:</strong> Add Shift Code in 7th column (e.g. <code>Shift III</code>, <code>General</code>, <code>Shift I</code>) to lock to that exact shift.<br />
+                        &bull; <strong>Auto-Fetch Option:</strong> Leave Shift Code empty (or omit it) and the system auto-detects Shift III (Night), General, or Shift I/II from the punch hours.<br />
+                        &bull; <strong>Example (Night Auto):</strong> <code>ECL-7001, 2026-11-06, 22:00:00, 2026-11-07, 06:00:00, Night shift duty</code><br />
+                        &bull; <strong>Example (Explicit Shift):</strong> <code>ECL-7001, 2026-11-06, 22:00:00, 2026-11-07, 06:00:00, Night shift duty, Shift III</code>
                     </div>
 
                     <!-- Direct Textarea -->
                     <div class="mb-3">
                         <label class="form-label small fw-semibold">CSV / Excel Clipboard Data</label>
-                        <textarea class="form-control font-monospace small" rows="7" placeholder="EmpCode,Date,InTime,OutTime,Reason&#10;ECL-7001,2026-11-04,08:30:00,16:30:00,Pithead turnstile power failure&#10;ECL-7002,2026-11-04,,17:00:00,Missed OUT punch due to rush&#10;ECL-7003,2026-11-04,08:45:00,,Missed IN punch due to sensor fault" @bind="bulkRegularizeCsvText"></textarea>
+                        <textarea class="form-control font-monospace small" rows="7" placeholder="EmpCode,InDate,InTime,OutDate,OutTime,Reason,ShiftCode&#10;ECL-7001,2026-11-06,08:30:00,2026-11-06,16:30:00,Day duty regularized,General&#10;ECL-7002,2026-11-06,22:00:00,2026-11-07,06:00:00,Night shift cross-midnight,Shift III&#10;ECL-7003,2026-11-06,21:45:00,2026-11-07,06:15:00,Auto-fetch night shift," @bind="bulkRegularizeCsvText"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer py-2">
@@ -1396,7 +1410,7 @@ else
                 <div class="modal-header bg-dark text-white py-2 d-flex justify-content-between align-items-center no-print">
                     <div class="d-flex align-items-center gap-2">
                         <i class="bi bi-file-earmark-pdf-fill text-warning fs-5"></i>
-                        <h6 class="modal-title fw-bold mb-0">Daily Attendance Report (Basic Report) &bull; Print Preview</h6>
+                        <h6 class="modal-title fw-bold mb-0">Daily Attendance Report &bull; Print Preview</h6>
                     </div>
                     <div class="d-flex align-items-center gap-2">
                         <div class="d-flex align-items-center gap-1 me-3">
@@ -1418,7 +1432,7 @@ else
                         <!-- Report Header (Clean, without company branding / header) -->
                         <div class="d-flex justify-content-between align-items-end mb-2">
                             <div>
-                                <h5 class="fw-bold mb-1" style="font-size: 17px; color: #000;">Daily Attendance Report (Basic Report)</h5>
+                                <h5 class="fw-bold mb-1" style="font-size: 17px; color: #000;">Daily Attendance Report</h5>
                                 <div style="font-size: 12px; color: #333;">@musterFromDate.ToString("MMM dd yyyy") To @musterToDate.ToString("MMM dd yyyy")</div>
                             </div>
                             <div class="text-end">
@@ -1533,39 +1547,82 @@ else
 }
 
 <style>
+    @@page {
+        size: A4 portrait;
+        margin: 10mm 10mm 10mm 10mm;
+    }
+
     @@media print {
-        body * {
-            visibility: hidden !important;
+        html, body, .page, main {
+            height: auto !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+            background: #fff !important;
         }
-        #essl-basic-report-container, #essl-basic-report-container * {
-            visibility: visible !important;
+
+        /* Hide navigation, sidebar, top-row, and non-modal page chrome completely */
+        .sidebar, .top-row, .navbar, header, nav, .card:not(.modal *), .alert:not(.modal *), .btn:not(.modal *), .no-print, .no-print * {
+            display: none !important;
         }
+
+        /* Hide all main page content siblings outside the modal */
+        article.content > *:not(.modal),
+        main > *:not(article),
+        .page > *:not(main) {
+            display: none !important;
+        }
+
+        .modal-backdrop, .modal-header, .modal-footer {
+            display: none !important;
+        }
+
+        .modal {
+            position: static !important;
+            display: block !important;
+            overflow: visible !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: #fff !important;
+            width: 100% !important;
+            box-shadow: none !important;
+            border: none !important;
+        }
+
+        .modal-dialog, .modal-content, .modal-body {
+            position: static !important;
+            display: block !important;
+            max-width: 100% !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+            background: #fff !important;
+            overflow: visible !important;
+        }
+
         #essl-basic-report-container {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
             width: 100% !important;
             max-width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
             box-shadow: none !important;
-        }
-        .modal, .modal-dialog, .modal-content, .modal-body {
-            position: static !important;
-            display: block !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: visible !important;
-            background: white !important;
-            box-shadow: none !important;
             border: none !important;
         }
-        .no-print {
-            display: none !important;
+
+        table {
+            page-break-inside: auto;
         }
-        @@page {
-            size: A4 portrait;
-            margin: 10mm 12mm 12mm 12mm;
+
+        tr {
+            page-break-inside: avoid;
+            page-break-after: auto;
+        }
+
+        thead {
+            display: table-header-group;
         }
     }
 </style>
@@ -2389,13 +2446,15 @@ else
     private async Task DownloadSampleRegularizationCsvAsync()
     {
         string dToday = musterToDate.ToString("yyyy-MM-dd");
+        string dTomorrow = musterToDate.AddDays(1).ToString("yyyy-MM-dd");
 
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("EmpCode,Date,InTime,OutTime,Reason");
-        sb.AppendLine($"ECL-7001,{dToday},08:30:00,16:30:00,Pithead turnstile power failure");
-        sb.AppendLine($"ECL-7002,{dToday},,17:00:00,Missed OUT punch due to rush");
-        sb.AppendLine($"ECL-7003,{dToday},08:45:00,,Missed IN punch due to sensor fault");
-        sb.AppendLine($"ECL-7004,{dToday},09:00:00,17:30:00,Deputed on official duty at ECL HQ");
+        sb.AppendLine("EmpCode,InDate,InTime,OutDate,OutTime,Reason,ShiftCode");
+        sb.AppendLine($"ECL-7001,{dToday},08:30:00,{dToday},16:30:00,Pithead turnstile power failure,General");
+        sb.AppendLine($"ECL-7002,{dToday},22:00:00,{dTomorrow},06:00:00,Night shift cross-midnight regularization,Shift III");
+        sb.AppendLine($"ECL-7003,{dToday},09:00:00,{dToday},17:00:00,General shift sensor calibration,");
+        sb.AppendLine($"ECL-7004,{dToday},21:45:00,{dTomorrow},06:15:00,Auto-fetch night shift,");
+        sb.AppendLine($"ECL-7005,{dToday},06:00:00,{dToday},14:00:00,Morning shift regularized,Shift I");
 
         string base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
         string fileName = "sample_bulk_regularization.csv";
@@ -2413,7 +2472,8 @@ else
     private void FillSampleRegularizationData()
     {
         string dToday = musterToDate.ToString("yyyy-MM-dd");
-        bulkRegularizeCsvText = $"EmpCode,Date,InTime,OutTime,Reason\nECL-7001,{dToday},08:30:00,16:30:00,Pithead turnstile power failure\nECL-7002,{dToday},,17:00:00,Missed OUT punch due to rush\nECL-7003,{dToday},08:45:00,,Missed IN punch due to sensor fault\nECL-7004,{dToday},09:00:00,17:30:00,Deputed on official duty at ECL HQ";
+        string dTomorrow = musterToDate.AddDays(1).ToString("yyyy-MM-dd");
+        bulkRegularizeCsvText = $"EmpCode,InDate,InTime,OutDate,OutTime,Reason,ShiftCode\nECL-7001,{dToday},08:30:00,{dToday},16:30:00,Pithead turnstile power failure,General\nECL-7002,{dToday},22:00:00,{dTomorrow},06:00:00,Night shift cross-midnight regularization,Shift III\nECL-7003,{dToday},09:00:00,{dToday},17:00:00,General shift sensor calibration,\nECL-7004,{dToday},21:45:00,{dTomorrow},06:15:00,Auto-fetch night shift,\nECL-7005,{dToday},06:00:00,{dToday},14:00:00,Morning shift regularized,Shift I";
     }
 
     private async Task HandleBulkRegularizeFileSelectedAsync(InputFileChangeEventArgs e)
@@ -2470,96 +2530,49 @@ else
                     continue;
                 }
 
-                // Check if row is Format B: EmpCode, DateIn, InTime, DateOut, OutTime, Reason[, ShiftCode]
-                // Detected when parts has >= 5 columns and parts[3] parses as a full date (contains date separator)
-                bool isTwoDateRow = parts.Length >= 5 &&
-                                    (parts[3].Contains('-') || parts[3].Contains('/') || parts[3].Contains('.')) &&
-                                    DateTime.TryParse(parts[3].Trim(), out _);
+                // Unified Single Format: EmpCode, InDate, InTime, OutDate, OutTime, Reason
+                // Handles both day shifts (InDate == OutDate) and cross-midnight night shifts (OutDate == InDate + 1)
+                string rawInDate = parts.Length > 1 ? parts[1].Trim() : string.Empty;
+                string rawInTime = parts.Length > 2 ? parts[2].Trim() : string.Empty;
+                string rawOutDate = parts.Length > 3 ? parts[3].Trim() : string.Empty;
+                string rawOutTime = parts.Length > 4 ? parts[4].Trim() : string.Empty;
+                string reason = parts.Length > 5 && !string.IsNullOrWhiteSpace(parts[5]) ? parts[5].Trim() : "Bulk Administrative Regularization";
 
-                DateTime targetDate;
+                if (!DateTime.TryParse(rawInDate, out var inDate))
+                {
+                    continue; // Skip invalid date rows
+                }
+
+                DateTime targetDate = inDate.Date;
                 DateTime? inTime = null;
                 DateTime? outTime = null;
-                string reason = "Bulk Administrative Regularization";
-                string? shiftCode = null;
 
-                if (isTwoDateRow)
+                if (!string.IsNullOrWhiteSpace(rawInTime))
                 {
-                    // Format B: EmpCode, DateIn, InTime, DateOut, OutTime, Reason
-                    if (!DateTime.TryParse(parts[1].Trim(), out var dateIn)) continue;
-                    targetDate = dateIn;
-
-                    if (!string.IsNullOrWhiteSpace(parts[2]))
+                    if (TimeSpan.TryParse(rawInTime, out var tsIn))
                     {
-                        string rawIn = parts[2].Trim();
-                        if (TimeSpan.TryParse(rawIn, out var tsIn)) inTime = dateIn.Date.Add(tsIn);
-                        else if (DateTime.TryParse(rawIn, out var dtIn)) inTime = dtIn;
+                        inTime = targetDate.Add(tsIn);
                     }
-
-                    if (DateTime.TryParse(parts[3].Trim(), out var dateOut) && parts.Length >= 5 && !string.IsNullOrWhiteSpace(parts[4]))
+                    else if (DateTime.TryParse(rawInTime, out var dtIn))
                     {
-                        string rawOut = parts[4].Trim();
-                        if (TimeSpan.TryParse(rawOut, out var tsOut)) outTime = dateOut.Date.Add(tsOut);
-                        else if (DateTime.TryParse(rawOut, out var dtOut)) outTime = dtOut;
-                    }
-
-                    if (parts.Length >= 6 && !string.IsNullOrWhiteSpace(parts[5]))
-                    {
-                        reason = parts[5].Trim();
-                    }
-
-                    if (parts.Length >= 7 && !string.IsNullOrWhiteSpace(parts[6]))
-                    {
-                        shiftCode = parts[6].Trim();
+                        inTime = dtIn;
                     }
                 }
-                else
+
+                DateTime outDate = DateTime.TryParse(rawOutDate, out var parsedOutDate) ? parsedOutDate.Date : targetDate;
+                if (!string.IsNullOrWhiteSpace(rawOutTime))
                 {
-                    // Format A: EmpCode, Date, InTime, OutTime, Reason
-                    if (!DateTime.TryParse(parts[1].Trim(), out targetDate))
+                    if (TimeSpan.TryParse(rawOutTime, out var tsOut))
                     {
-                        continue;
+                        outTime = outDate.Add(tsOut);
                     }
-
-                    if (parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]))
+                    else if (DateTime.TryParse(rawOutTime, out var dtOut))
                     {
-                        string rawIn = parts[2].Trim();
-                        if (TimeSpan.TryParse(rawIn, out var tsIn))
-                        {
-                            inTime = targetDate.Date.Add(tsIn);
-                        }
-                        else if (DateTime.TryParse(rawIn, out var dtIn))
-                        {
-                            inTime = dtIn;
-                        }
-                    }
-
-                    if (parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]))
-                    {
-                        string rawOut = parts[3].Trim();
-                        if (TimeSpan.TryParse(rawOut, out var tsOut))
-                        {
-                            outTime = targetDate.Date.Add(tsOut);
-                            if (inTime.HasValue && outTime < inTime)
-                            {
-                                outTime = outTime.Value.AddDays(1);
-                            }
-                        }
-                        else if (DateTime.TryParse(rawOut, out var dtOut))
-                        {
-                            outTime = dtOut;
-                        }
-                    }
-
-                    if (parts.Length >= 5 && !string.IsNullOrWhiteSpace(parts[4]))
-                    {
-                        reason = parts[4].Trim();
-                    }
-
-                    if (parts.Length >= 6 && !string.IsNullOrWhiteSpace(parts[5]))
-                    {
-                        shiftCode = parts[5].Trim();
+                        outTime = dtOut;
                     }
                 }
+
+                string? shiftCode = parts.Length > 6 && !string.IsNullOrWhiteSpace(parts[6]) ? parts[6].Trim() : null;
 
                 entries.Add(new BulkRegularizeEntryDto(code, targetDate, inTime, outTime, reason, shiftCode));
             }
